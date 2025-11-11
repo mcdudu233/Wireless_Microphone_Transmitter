@@ -1,18 +1,25 @@
 #include <Arduino.h>
 
-// put function declarations here:
-int myFunction(int, int);
 
-void setup() {
-  // put your setup code here, to run once:
-  int result = myFunction(2, 3);
+
+
+void setup()
+{
+  
 }
 
-void loop() {
-  // put your main code here, to run repeatedly:
-}
-
-// put function definitions here:
-int myFunction(int x, int y) {
-  return x + y;
+void loop()
+{
+  srand(time(0));
+  for (int i = 0; i < 256; i++){
+    int R = rand() % 10;
+    delay(1);
+    int G = rand() % 10;
+    delay(1);
+    int B = rand() % 10;
+    delay(1);
+    led.SetPixelColor(0, RgbColor(R, G, B));
+    led.Show();
+    delay(100);
+  }
 }
