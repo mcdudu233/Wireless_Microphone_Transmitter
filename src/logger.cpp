@@ -1,7 +1,5 @@
 #include "logger.h"
 
-#include "ArduinoLog.h"
-
 void printTimestamp(Print *_logOutput)
 {
   // Division constants
@@ -68,53 +66,5 @@ void logger::setup()
     ;
   Log.begin(LOG_LEVEL_VERBOSE, &Serial);
 
-  logger::debugln("Logger is started!");
-}
-
-template <class T, typename... Args>
-void logger::debug(T msg, Args... args)
-{
-  Log.verbose(msg, args...);
-}
-
-template <class T, typename... Args>
-void logger::info(T msg, Args... args)
-{
-  Log.info(msg, args...);
-}
-
-template <class T, typename... Args>
-void logger::warn(T msg, Args... args)
-{
-  Log.warning(msg, args...);
-}
-
-template <class T, typename... Args>
-void logger::error(T msg, Args... args)
-{
-  Log.error(msg, args...);
-}
-
-template <class T, typename... Args>
-void logger::debugln(T msg, Args... args)
-{
-  Log.verboseln(msg, args...);
-}
-
-template <class T, typename... Args>
-void logger::infoln(T msg, Args... args)
-{
-  Log.infoln(msg, args...);
-}
-
-template <class T, typename... Args>
-void logger::warnln(T msg, Args... args)
-{
-  Log.warningln(msg, args...);
-}
-
-template <class T, typename... Args>
-void logger::errorln(T msg, Args... args)
-{
-  Log.errorln(msg, args...);
+  debugln("Logger is started!");
 }
