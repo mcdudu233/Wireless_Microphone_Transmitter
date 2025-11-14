@@ -1,0 +1,7 @@
+dependencies:
+  espressif/tinyusb:
+    version: ^0.18.0~6
+  idf: '>=5.0'
+description: Import for dependencies.
+targets:
+- esp32s3
