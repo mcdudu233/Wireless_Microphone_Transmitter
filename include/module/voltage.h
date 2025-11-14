@@ -6,6 +6,6 @@
 namespace voltage
 {
   void setup();
-  float getVCCVoltage();
-  float getBATVoltage();
+  double getVCCVoltage();
+  double getBATVoltage();
 }

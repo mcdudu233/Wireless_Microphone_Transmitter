@@ -1,3 +1,4 @@
+#include "logger.h"
 #include "module/led.h"
 
 #include "LiteLED.h"
@@ -7,8 +8,9 @@ LiteLED strip(LED_STRIP_WS2812, false);
 void led::setup()
 {
   strip.begin(LED_IO, LED_NUM);
-  brightness(100);
+  brightness(50);
   black();
+  logger::debugln("LED is started!");
 }
 
 void led::black()
