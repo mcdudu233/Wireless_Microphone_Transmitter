@@ -3,6 +3,8 @@
 #include "module/voltage.h"
 #include "module/audio/power.h"
 #include "module/audio/encoder.h"
+#include "module/usb/usb.h"
+#include "tusb.h"
 
 void setup()
 {
@@ -13,6 +15,7 @@ void setup()
   audio::encoder::setup();
   logger::infoln("All modules are started now!");
   audio::encoder::on();
+  usb::setup();
 }
 
 void loop()

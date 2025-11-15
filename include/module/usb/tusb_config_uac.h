@@ -10,53 +10,34 @@ extern "C"
 {
 #endif
 
-#define MIC_CHANNEL_NUM 2          /*!< MIC */
-#define MIC_SAMPLE_RATE 192 * 1000 /*!< SAMPLE RATE */
-#define MIC_SAMPLE_BYTE 4          /*!< SAMPLE BYTE */
-#define MIC_SAMPLE_BIT 32          /*!< SAMPLE BIT */
-#define MIC_INTERVAL_MS 1          /*!< WRITE INTERVAL in ms*/
+#include "usb_descriptors.h"
 
-//--------------------------------------------------------------------
-// AUDIO CLASS DRIVER CONFIGURATION
-//--------------------------------------------------------------------
-
-// Enable feedback EP
-#define CFG_TUD_AUDIO_ENABLE_FEEDBACK_EP 1
-
-// Enable/disable conversion from 16.16 to 10.14 format on full-speed devices
-#if CONFIG_UAC_SUPPORT_MACOS
-#define CFG_TUD_AUDIO_ENABLE_FEEDBACK_FORMAT_CORRECTION 1
-#endif
-
-#define CFG_TUD_AUDIO_FUNC_1_DESC_LEN TUD_AUDIO_DEVICE_DESC_LEN
+#define CFG_TUD_AUDIO_FUNC_1_MAX_SAMPLE_RATE 192000
 
 // How many formats are used, need to adjust USB descriptor if changed
-#define CFG_TUD_AUDIO_FUNC_1_N_FORMATS 1
-
-#define CFG_TUD_AUDIO_FUNC_1_MAX_SAMPLE_RATE MIC_SAMPLE_RATE
-#define CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX MIC_CHANNEL_NUM
+#define CFG_TUD_AUDIO_FUNC_1_N_FORMATS 2
 
 // 16bit in 16bit slots
-#define CFG_TUD_AUDIO_FUNC_1_FORMAT_1_N_BYTES_PER_SAMPLE_RX MIC_SAMPLE_BYTE
-#define CFG_TUD_AUDIO_FUNC_1_FORMAT_1_RESOLUTION_RX MIC_SAMPLE_BIT
+#define CFG_TUD_AUDIO_FUNC_1_FORMAT_1_N_BYTES_PER_SAMPLE_TX 2
+#define CFG_TUD_AUDIO_FUNC_1_FORMAT_1_RESOLUTION_RX 16
 
-// EP and buffer size - for isochronous EP´s, the buffer and EP size are equal (different sizes would not make sense)
+// 24bit in 32bit slots
+#define CFG_TUD_AUDIO_FUNC_1_FORMAT_2_N_BYTES_PER_SAMPLE_TX 4
+#define CFG_TUD_AUDIO_FUNC_1_FORMAT_2_RESOLUTION_RX 24
+
+// Have a look into audio_device.h for all configurations
+#define CFG_TUD_AUDIO_FUNC_1_DESC_LEN TUD_AUDIO_MIC_TWO_CH_DESC_LEN
+#define CFG_TUD_AUDIO_FUNC_1_N_AS_INT 1     // Number of Standard AS Interface Descriptors (4.9.1) defined per audio function - this is required to be able to remember the current alternate settings of these interfaces - We restrict us here to have a constant number for all audio functions (which means this has to be the maximum number of AS interfaces an audio function has and a second audio function with less AS interfaces just wastes a few bytes)
+#define CFG_TUD_AUDIO_FUNC_1_CTRL_BUF_SZ 64 // Size of control request buffer
+
 #define CFG_TUD_AUDIO_ENABLE_EP_IN 1
+#define CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_TX 2 // Driver gets this info from the descriptors - we define it here to use it to setup the descriptors and to do calculations with it below - be aware: for different number of channels you need another descriptor!
 
-// MIC
-#define CFG_TUD_AUDIO_FUNC_1_FORMAT_1_EP_SZ_IN ((CFG_TUD_AUDIO_FUNC_1_MAX_SAMPLE_RATE / 1000 * CFG_TUD_AUDIO_FUNC_1_FORMAT_1_N_BYTES_PER_SAMPLE_RX * CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX) + 4)
+#define CFG_TUD_AUDIO_FUNC_1_FORMAT_1_EP_SZ_IN TUD_AUDIO_EP_SIZE(CFG_TUD_AUDIO_FUNC_1_MAX_SAMPLE_RATE, CFG_TUD_AUDIO_FUNC_1_FORMAT_1_N_BYTES_PER_SAMPLE_TX, CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_TX)
+#define CFG_TUD_AUDIO_FUNC_1_FORMAT_2_EP_SZ_IN TUD_AUDIO_EP_SIZE(CFG_TUD_AUDIO_FUNC_1_MAX_SAMPLE_RATE, CFG_TUD_AUDIO_FUNC_1_FORMAT_2_N_BYTES_PER_SAMPLE_TX, CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_TX)
 
-#define CFG_TUD_AUDIO_FUNC_1_EP_IN_SW_BUF_SZ CFG_TUD_AUDIO_FUNC_1_FORMAT_1_EP_SZ_IN *(MIC_INTERVAL_MS + 1)
-#define CFG_TUD_AUDIO_FUNC_1_EP_IN_SZ_MAX CFG_TUD_AUDIO_FUNC_1_FORMAT_1_EP_SZ_IN // Maximum EP IN size for all AS alternate settings used
-
-// EP and buffer size - for isochronous EP´s, the buffer and EP size are equal (different sizes would not make sense)
-#define CFG_TUD_AUDIO_ENABLE_EP_OUT 0
-
-// Number of Standard AS Interface Descriptors (4.9.1) defined per audio function - this is required to be able to remember the current alternate settings of these interfaces - We restrict us here to have a constant number for all audio functions (which means this has to be the maximum number of AS interfaces an audio function has and a second audio function with less AS interfaces just wastes a few bytes)
-#define CFG_TUD_AUDIO_FUNC_1_N_AS_INT 1
-
-// Size of control request buffer
-#define CFG_TUD_AUDIO_FUNC_1_CTRL_BUF_SZ 64
+#define CFG_TUD_AUDIO_FUNC_1_EP_IN_SZ_MAX TU_MAX(CFG_TUD_AUDIO_FUNC_1_FORMAT_1_EP_SZ_IN, CFG_TUD_AUDIO_FUNC_1_FORMAT_2_EP_SZ_IN) // Maximum EP IN size for all AS alternate settings used
+#define CFG_TUD_AUDIO_FUNC_1_EP_IN_SW_BUF_SZ CFG_TUD_AUDIO_FUNC_1_EP_IN_SZ_MAX
 
 #ifdef __cplusplus
 }

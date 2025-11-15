@@ -31,20 +31,17 @@ extern "C"
 {
 #endif
 
+#include "tusb_config_cdc.h"
 #include "tusb_config_uac.h"
+#include "usb_descriptors.h"
 
 //--------------------------------------------------------------------+
 // Board Specific Configuration
 //--------------------------------------------------------------------+
 
-// RHPort number used for device can be defined by board.mk, default to port 0
-#ifdef CONFIG_TINYUSB_RHPORT_HS
+// Use High Speed Mode
 #define CFG_TUSB_RHPORT1_MODE OPT_MODE_DEVICE | OPT_MODE_HIGH_SPEED
 #define CONFIG_USB_HS 1
-#else
-#define CFG_TUSB_RHPORT0_MODE OPT_MODE_DEVICE | OPT_MODE_FULL_SPEED
-#define CONFIG_USB_HS 0
-#endif
 
 //--------------------------------------------------------------------
 // Common Configuration
@@ -57,6 +54,7 @@ extern "C"
 
 #ifndef CFG_TUSB_OS
 #define CFG_TUSB_OS OPT_OS_FREERTOS
+#define CFG_TUSB_OS_INC_PATH freertos/
 #endif
 
 #ifndef ESP_PLATFORM
@@ -65,10 +63,6 @@ extern "C"
 
 #ifndef CFG_TUSB_DEBUG
 #define CFG_TUSB_DEBUG 0
-#endif
-
-#if TU_CHECK_MCU(OPT_MCU_ESP32S2, OPT_MCU_ESP32S3, OPT_MCU_ESP32P4)
-#define CFG_TUSB_OS_INC_PATH freertos/
 #endif
 
 // Enable Device stack
