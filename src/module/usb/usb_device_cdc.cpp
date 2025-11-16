@@ -1,20 +1,41 @@
+#include "module/usb/usb.h"
 #include "module/usb/usb_device_cdc.h"
 
 #include "tusb.h"
+#include "esp_system.h"
+#include "driver/gpio.h"
+#include "soc/rtc_cntl_reg.h"
+#include "soc/rtc.h"
+#include "esp_rom_sys.h"
+
+static bool cdc_connected = false;
 
 // Invoked when cdc when line state changed e.g connected/disconnected
 void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts)
 {
   (void)itf;
-  (void)rts;
 
-  if (dtr)
+  if (rts)
   {
-    // Terminal connected
+    // 重启进入下载模式
+    REG_WRITE(RTC_CNTL_OPTION1_REG, RTC_CNTL_FORCE_DOWNLOAD_BOOT);
+    REG_WRITE(RTC_CNTL_OPTIONS0_REG, RTC_CNTL_SW_SYS_RST);
   }
   else
   {
-    // Terminal disconnected
+    if (dtr)
+    {
+      // Terminal connected
+      cdc_connected = true;
+      const char *welcome = "CDC Serial Connected - Echo Enabled\r\n";
+      tud_cdc_write_str(welcome);
+      tud_cdc_write_flush();
+    }
+    else
+    {
+      // Terminal disconnected
+      cdc_connected = false;
+    }
   }
 }
 

@@ -3,4 +3,5 @@
 namespace usb
 {
   void setup();
+  void remove();
 }

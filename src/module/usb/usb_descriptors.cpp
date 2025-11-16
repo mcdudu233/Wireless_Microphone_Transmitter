@@ -38,16 +38,16 @@ uint8_t const *tud_descriptor_device_cb(void)
 // Configuration Descriptor
 //--------------------------------------------------------------------+
 #define CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + CFG_TUD_AUDIO * TUD_AUDIO_MIC_TWO_CH_DESC_LEN + CFG_TUD_CDC * TUD_CDC_DESC_LEN)
-#define EPNUM_AUDIO_IN 0x81
-#define EPNUM_CDC_NOTIF 0x83
-#define EPNUM_CDC_OUT 0x04
-#define EPNUM_CDC_IN 0x85
+#define EPNUM_CDC_NOTIF 0x81
+#define EPNUM_CDC_OUT 0x02
+#define EPNUM_CDC_IN 0x82
+#define EPNUM_AUDIO_IN 0x83
 
 uint8_t const desc_configuration[] = {
     // Config number, interface count, string index, total length, attribute, power in mA
     TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TOTAL_LEN, TUSB_DESC_CONFIG_ATT_SELF_POWERED, 500),
     TUD_AUDIO_MIC_TWO_CH_DESCRIPTOR(ITF_NUM_AUDIO_CONTROL, 4, EPNUM_AUDIO_IN),
-    TUD_CDC_DESCRIPTOR(ITF_NUM_CDC_CMD, 5, EPNUM_CDC_NOTIF, 16, EPNUM_CDC_OUT, EPNUM_CDC_IN, 64),
+    TUD_CDC_DESCRIPTOR(ITF_NUM_CDC_CMD, 5, EPNUM_CDC_NOTIF, 8, EPNUM_CDC_OUT, EPNUM_CDC_IN, 64),
 };
 
 // Invoked when received GET CONFIGURATION DESCRIPTOR
@@ -65,12 +65,12 @@ uint8_t const *tud_descriptor_configuration_cb(uint8_t index)
 
 // array of pointer to string descriptors
 char const *string_desc_arr[] = {
-    (const char[]){0x09, 0x04},        // 0: is supported language is English (0x0409)
-    "dudu233",                         // 1: Manufacturer
-    "Wireless Microphone",             // 2: Product
-    "mic_2_192khz_32bit",              // 3: Serials, should use chip ID
-    "Wireless Microphone Audio (UAC)", // 4: UAC Interface
-    "Wireless Microphone UART (CDC)",  // 5: CDC Interface
+    (const char[]){0x09, 0x04},       // 0: is supported language is English (0x0409)
+    "dudu233",                        // 1: Manufacturer
+    "Wireless Microphone",            // 2: Product
+    "mic_2_192khz_32bit",             // 3: Serials, should use chip ID
+    "WirelessMicrophone Audio (UAC)", // 4: UAC Interface
+    "WirelessMicrophone UART (CDC)",  // 5: CDC Interface
 };
 
 static uint16_t _desc_str[32];

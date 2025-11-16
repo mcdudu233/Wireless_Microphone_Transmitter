@@ -52,28 +52,42 @@ static void tusb_mic_handle(void *pvParam)
   }
 }
 
-static usb_phy_handle_t phy_hdl;
-static void usb_phy_init(void)
+static usb_phy_handle_t usb_phy;
+
+static TaskHandle_t task;
+
+void usb::setup()
 {
-  // Configure USB PHY
+  // 初始化USB
   usb_phy_config_t phy_conf = {
       .controller = USB_PHY_CTRL_OTG,
       .otg_mode = USB_OTG_MODE_DEVICE,
       .otg_speed = USB_PHY_SPEED_HIGH,
   };
-  usb_new_phy(&phy_conf, &phy_hdl);
-}
+  usb_new_phy(&phy_conf, &usb_phy);
 
-void usb::setup()
-{
-  usb_phy_init();
+  // 初始化TUSB
   bool usb_init = tusb_init();
   if (!usb_init)
   {
     logger::warnln("USB Device Stack Init Fail");
     return;
   }
-  xTaskCreatePinnedToCore(tusb_handle, "tusb_handle", TASK_TUSB_STACK, NULL, TASK_TUSB_PRIORITY, NULL, TASK_TUSB_CORE);
+  xTaskCreatePinnedToCore(tusb_handle, "tusb_handle", TASK_TUSB_STACK, NULL, TASK_TUSB_PRIORITY, &task, TASK_TUSB_CORE);
+}
+
+void usb::remove()
+{
+  // tud_disconnect();
+  tud_deinit(0);
+  vTaskDelete(task);
+  usb_del_phy(usb_phy);
+
+  // 切换到下载模式
+  usb_phy_config_t phy_conf = {
+      .controller = USB_PHY_CTRL_SERIAL_JTAG,
+  };
+  usb_new_phy(&phy_conf, &usb_phy);
 }
 
 /*               USB设备回调              */
