@@ -9,6 +9,9 @@
 
 namespace audio::encoder
 {
+  extern const int buffer_size;
+  extern char buffer[1024];
+
   void setup();
   void on(uint32_t rate = 192 * 1000, uint32_t bit = 32);
   void off();

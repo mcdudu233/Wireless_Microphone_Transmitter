@@ -6,8 +6,8 @@
 #include "ESP_I2S.h"
 
 static I2SClass I2S;
-static const int buffer_size = 1024;
-static char buffer[buffer_size];
+const int audio::encoder::buffer_size = 1024;
+char audio::encoder::buffer[1024];
 
 static bool powerOn = false;
 
@@ -29,7 +29,8 @@ static void audioHandle(void *arg)
       }
       if (I2S.available() != -1)
       {
-        read_len += I2S.readBytes(buffer, buffer_size);
+        int len = I2S.readBytes(audio::encoder::buffer, audio::encoder::buffer_size);
+        read_len += len;
       }
     }
     else

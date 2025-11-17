@@ -4,7 +4,11 @@
 #include "module/audio/power.h"
 #include "module/audio/encoder.h"
 #include "module/usb/usb.h"
-#include "tusb.h"
+
+// #include <BLEDevice.h>
+// #include <BLEUtils.h>
+// #include <BLEScan.h>
+// #include <BLEAdvertisedDevice.h>
 
 void setup()
 {
@@ -14,8 +18,10 @@ void setup()
   audio::power::setup();
   audio::encoder::setup();
   logger::infoln("All modules are started now!");
-  audio::encoder::on();
+  audio::encoder::on(48000, 16);
   usb::setup();
+
+  // BLEDevice::init("test");
 }
 
 void loop()

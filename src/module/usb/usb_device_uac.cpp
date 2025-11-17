@@ -1,12 +1,15 @@
 #include "config.h"
 #include "logger.h"
+#include "module/audio/encoder.h"
 #include "module/usb/usb_device_uac.h"
 #include "module/usb/tusb_config.h"
 #include "module/usb/usb_descriptors.h"
 
 #include "tusb.h"
 
-/*               音频设备回调              */
+/**********************************************/
+/*               音频设备信息回调              */
+/**********************************************/
 // 音频的输出频率
 static const uint32_t supported_freq[] = {16000, 32000, 48000, 96000, 192000};
 #define SUPPORTED_FREQ_SIZE TU_ARRAY_SIZE(supported_freq)
@@ -15,7 +18,7 @@ static int32_t current_freq = 96000;
 static const uint8_t supported_bit[CFG_TUD_AUDIO_FUNC_1_N_FORMATS] = {
     CFG_TUD_AUDIO_FUNC_1_FORMAT_1_RESOLUTION_RX,
     CFG_TUD_AUDIO_FUNC_1_FORMAT_2_RESOLUTION_RX,
-};
+    CFG_TUD_AUDIO_FUNC_1_FORMAT_3_RESOLUTION_RX};
 static uint8_t current_bit = supported_bit[0];
 // 音频的音量
 enum
@@ -220,7 +223,48 @@ bool tud_audio_set_itf_cb(uint8_t rhport, tusb_control_request_t const *p_reques
     // }
     return true;
 }
+/**********************************************/
+/**********************************************/
+/**********************************************/
 
+/**********************************************/
+/*                音频流传输回调               */
+/**********************************************/
+
+bool tud_audio_tx_done_pre_load_cb(uint8_t rhport, uint8_t itf, uint8_t ep_in, uint8_t cur_alt_setting)
+{
+    (void)rhport;
+    (void)itf;
+    (void)ep_in;
+    (void)cur_alt_setting;
+
+    // tud_audio_write((uint8_t *)test_buffer_audio, (uint16_t)(sampFreq / (TUD_OPT_HIGH_SPEED ? 8000 : 1000) * bytesPerSample));
+
+    // In read world application data flow is driven by I2S clock,
+    // both tud_audio_tx_done_pre_load_cb() & tud_audio_tx_done_post_load_cb() are hardly used.
+    // For example in your I2S receive callback:
+    // void I2S_Rx_Callback(int channel, const void* data, uint16_t samples)
+    // {
+    //    tud_audio_write_support_ff(channel, data, samples * N_BYTES_PER_SAMPLE * N_CHANNEL_PER_FIFO);
+    // }
+
+    tud_audio_write((uint8_t *)audio::encoder::buffer, (uint16_t)(audio::encoder::buffer_size));
+
+    return true;
+}
+
+bool tud_audio_tx_done_post_load_cb(uint8_t rhport, uint16_t n_bytes_copied, uint8_t itf, uint8_t ep_in, uint8_t cur_alt_setting)
+{
+    (void)rhport;
+    (void)n_bytes_copied;
+    (void)itf;
+    (void)ep_in;
+    (void)cur_alt_setting;
+
+    return true;
+}
+
+// 收到关闭音频流信息
 bool tud_audio_set_itf_close_EP_cb(uint8_t rhport, tusb_control_request_t const *p_request)
 {
     (void)rhport;
@@ -237,74 +281,6 @@ bool tud_audio_set_itf_close_EP_cb(uint8_t rhport, tusb_control_request_t const 
 
     return true;
 }
-
-bool tud_audio_rx_done_post_read_cb(uint8_t rhport, uint16_t n_bytes_received, uint8_t func_id, uint8_t ep_out, uint8_t cur_alt_setting)
-{
-    // (void)rhport;
-    // (void)func_id;
-    // (void)ep_out;
-    // (void)cur_alt_setting;
-
-    // static bool new_play = false;
-    // static int64_t last_time = 0;
-    // int64_t now = esp_timer_get_time();
-
-    // /**
-    //  * @brief If no data is received for a certain period, it is considered as the initiation
-    //  *        of a new audio transmission. At this point, the FIFO data is cleared, and a segment
-    //  *        of data is buffered in the I2S.
-    //  */
-    // if (now - last_time > 100 * CONFIG_UAC_SPK_NEW_PLAY_INTERVAL)
-    // {
-    //     new_play = true;
-    //     tud_audio_clear_ep_out_ff();
-    // }
-    // last_time = now;
-
-    // int bytes_remained = tud_audio_available();
-
-    // size_t bytes_require = s_uac_device->spk_bytes_per_ms;
-
-    // if (new_play)
-    // {
-    //     /*!< Buffer a segment of data in the I2S and control the data size to be half of the UAC FIFO size. */
-    //     bytes_require = SPK_INTERVAL_MS * s_uac_device->spk_bytes_per_ms / 2;
-    //     if (bytes_remained < bytes_require)
-    //     {
-    //         return true;
-    //     }
-    //     new_play = false;
-    // }
-
-    // s_uac_device->spk_data_size = tud_audio_read(s_uac_device->spk_buf, bytes_require);
-    // xTaskNotifyGive(s_uac_device->spk_task_handle);
-    return true;
-}
-
-bool tud_audio_tx_done_pre_load_cb(uint8_t rhport, uint8_t itf, uint8_t ep_in, uint8_t cur_alt_setting)
-{
-    (void)rhport;
-    (void)itf;
-    (void)ep_in;
-    (void)cur_alt_setting;
-    // size_t bytes_require = MIC_INTERVAL_MS * mic_bytes_per_ms;
-
-    tu_fifo_t *sw_in_fifo = tud_audio_get_ep_in_ff();
-    uint16_t fifo_remained = tu_fifo_remaining(sw_in_fifo);
-    // if (fifo_remained < bytes_require)
-    // {
-    //     return true;
-    // }
-
-    // load data chunk by chunk
-    // UAC_ENTER_CRITICAL();
-    // if (s_uac_device->mic_data_size > 0)
-    // {
-    //     tud_audio_write((void *)s_uac_device->mic_buf_read, s_uac_device->mic_data_size);
-    //     s_uac_device->mic_data_size = 0;
-    // }
-    // UAC_EXIT_CRITICAL();
-
-    return true;
-}
-/******************************************/
+/**********************************************/
+/**********************************************/
+/**********************************************/
