@@ -1,4 +1,5 @@
 #include "logger.h"
+#include "module/usb/usb_device_cdc.h"
 
 void printTimestamp(Print *_logOutput)
 {
@@ -61,10 +62,7 @@ void logger::setup()
   Log.setShowLevel(false);
 
   // 初始化串口
-  Serial.begin(115200);
-  // while (!Serial && !Serial.available())
-  //   ;
-  Log.begin(LOG_LEVEL_VERBOSE, &Serial);
+  Log.begin(LOG_LEVEL_VERBOSE, &USBCDCSerial);
 
   debugln("Logger is started!");
 }

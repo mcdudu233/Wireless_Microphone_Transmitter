@@ -230,7 +230,7 @@ bool tud_audio_set_itf_cb(uint8_t rhport, tusb_control_request_t const *p_reques
 /**********************************************/
 /*                音频流传输回调               */
 /**********************************************/
-
+static unsigned long last = millis();
 bool tud_audio_tx_done_pre_load_cb(uint8_t rhport, uint8_t itf, uint8_t ep_in, uint8_t cur_alt_setting)
 {
     (void)rhport;
@@ -247,6 +247,10 @@ bool tud_audio_tx_done_pre_load_cb(uint8_t rhport, uint8_t itf, uint8_t ep_in, u
     // {
     //    tud_audio_write_support_ff(channel, data, samples * N_BYTES_PER_SAMPLE * N_CHANNEL_PER_FIFO);
     // }
+
+    unsigned long now = millis();
+    logger::debugln("%d", now - last);
+    last = now;
 
     tud_audio_write((uint8_t *)audio::encoder::buffer, (uint16_t)(audio::encoder::buffer_size));
 

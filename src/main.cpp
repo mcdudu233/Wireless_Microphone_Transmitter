@@ -5,6 +5,8 @@
 #include "module/audio/encoder.h"
 #include "module/usb/usb.h"
 
+#include "module/usb/usb_device_cdc.h"
+
 // #include <BLEDevice.h>
 // #include <BLEUtils.h>
 // #include <BLEScan.h>
@@ -12,6 +14,7 @@
 
 void setup()
 {
+  usb::setup();
   logger::setup();
   led::setup();
   voltage::setup();
@@ -19,7 +22,6 @@ void setup()
   audio::encoder::setup();
   logger::infoln("All modules are started now!");
   audio::encoder::on(48000, 16);
-  usb::setup();
 
   // BLEDevice::init("test");
 }
@@ -32,5 +34,6 @@ void loop()
   // delay(100);
   // logger::infoln("VCC: %D", voltage::getVCCVoltage());
   // logger::infoln("BAT: %D", voltage::getBATVoltage());
+  // logger::debugln("test");
   delay(100);
 }
