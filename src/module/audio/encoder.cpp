@@ -27,30 +27,29 @@ static void audioHandle(void *arg)
     if (powerOn)
     {
       delay(15 * 1000);
-      uint32_t sample_rate = 48000;
-      uint16_t sample_width = 32;
-      uint16_t num_channels = 2;
-      size_t rec_size = 15 * ((sample_rate * (sample_width / 8)) * num_channels);
-      const pcm_wav_header_t wav_header = PCM_WAV_HEADER_DEFAULT(rec_size, sample_width, sample_rate, num_channels);
-      logger::debugln("Record WAV: rate:%lu, bits:%u, channels:%u, size:%lu", sample_rate, sample_width, num_channels, rec_size);
+      // uint32_t sample_rate = 48000;
+      // uint16_t sample_width = 32;
+      // uint16_t num_channels = 2;
+      // size_t rec_size = 15 * ((sample_rate * (sample_width / 8)) * num_channels);
+      // const pcm_wav_header_t wav_header = PCM_WAV_HEADER_DEFAULT(rec_size, sample_width, sample_rate, num_channels);
+      // logger::debugln("Record WAV: rate:%lu, bits:%u, channels:%u, size:%lu", sample_rate, sample_width, num_channels, rec_size);
 
-      uint8_t *wav_buf = (uint8_t *)heap_caps_malloc(rec_size + PCM_WAV_HEADER_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_32BIT);
-      if (wav_buf == NULL)
-      {
-        logger::debugln("Failed to allocate WAV buffer with size %u", rec_size + PCM_WAV_HEADER_SIZE);
-        return;
-      }
-      memcpy(wav_buf, &wav_header, PCM_WAV_HEADER_SIZE);
-      size_t wav_size = I2S.readBytes((char *)(wav_buf + PCM_WAV_HEADER_SIZE), rec_size);
-      if (wav_size < rec_size)
-      {
-        logger::debugln("Recorded %u bytes from %u", wav_size, rec_size);
-      }
-      else
-      {
-        // logger::debugln("Recorded %u bytes all!", wav_size);
-        USBCDCSerial.write(wav_buf, rec_size + PCM_WAV_HEADER_SIZE);
-      }
+      // uint8_t *wav_buf = (uint8_t *)heap_caps_malloc(rec_size + PCM_WAV_HEADER_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_32BIT);
+      // if (wav_buf == NULL)
+      // {
+      //   logger::debugln("Failed to allocate WAV buffer with size %u", rec_size + PCM_WAV_HEADER_SIZE);
+      //   return;
+      // }
+      // memcpy(wav_buf, &wav_header, PCM_WAV_HEADER_SIZE);
+      // size_t wav_size = I2S.readBytes((char *)(wav_buf + PCM_WAV_HEADER_SIZE), rec_size);
+      // if (wav_size < rec_size)
+      // {
+      //   logger::debugln("Recorded %u bytes from %u", wav_size, rec_size);
+      // }
+      // else
+      // {
+      //   USBCDCSerial.write(wav_buf, rec_size + PCM_WAV_HEADER_SIZE);
+      // }
 
       // // if (millis() - last_time >= 1000)
       // // {
