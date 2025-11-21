@@ -1,5 +1,7 @@
 #pragma once
 
+#include "queue.h"
+
 #define AUDIO_ENCODER_WS 17
 #define AUDIO_ENCODER_CLK 16
 #define AUDIO_ENCODER_SD 15
@@ -7,10 +9,12 @@
 #define AUDIO_ENCODER_MD0 21
 #define AUDIO_ENCODER_MD1 18
 
+#define AUDIO_ENCODER_MAX_BUF_SIZE 1536
+#define AUDIO_ENCODER_MAX_QUEUE_SIZE 10
+
 namespace audio::encoder
 {
-  extern const int buffer_size;
-  extern char buffer[1024];
+  extern QueueHandle_t data;
 
   void setup();
   void on(uint32_t rate = 192 * 1000, uint32_t bit = 32);

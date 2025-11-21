@@ -230,7 +230,7 @@ bool tud_audio_set_itf_cb(uint8_t rhport, tusb_control_request_t const *p_reques
 /**********************************************/
 /*                音频流传输回调               */
 /**********************************************/
-static unsigned long last = millis();
+static uint8_t buffer[UAC_MAX_BUF_SIZE];
 bool tud_audio_tx_done_pre_load_cb(uint8_t rhport, uint8_t itf, uint8_t ep_in, uint8_t cur_alt_setting)
 {
     (void)rhport;
@@ -248,11 +248,19 @@ bool tud_audio_tx_done_pre_load_cb(uint8_t rhport, uint8_t itf, uint8_t ep_in, u
     //    tud_audio_write_support_ff(channel, data, samples * N_BYTES_PER_SAMPLE * N_CHANNEL_PER_FIFO);
     // }
 
-    unsigned long now = millis();
-    logger::debugln("%d", now - last);
-    last = now;
-
-    tud_audio_write((uint8_t *)audio::encoder::buffer, (uint16_t)(audio::encoder::buffer_size));
+    // uint8_t *buf;
+    // if (xQueueReceive(audio::encoder::data, buf, 0) == pdTRUE)
+    // {
+    //     uint16_t size = 96000 * 4 * 2 / 1000;
+    //     memcpy(buffer, buf, size);
+    //     delete[] buf;
+    //     tud_audio_write(buffer, size);
+    //     i++;
+    // }
+    // else
+    // {
+    //     logger::warnln("Audio Encoder's queue is empty!");
+    // }
 
     return true;
 }
@@ -276,12 +284,7 @@ bool tud_audio_set_itf_close_EP_cb(uint8_t rhport, tusb_control_request_t const 
     uint8_t const itf = tu_u16_low(tu_le16toh(p_request->wIndex));
     uint8_t const alt = tu_u16_low(tu_le16toh(p_request->wValue));
 
-    // if (mic_itf_num == itf && alt == 0)
-    // {
-    //     logger::debugln("Microphone interface closed");
-    //     mic_data_size = 0;
-    //     mic_active = false;
-    // }
+    logger::debugln("Microphone interface closed");
 
     return true;
 }

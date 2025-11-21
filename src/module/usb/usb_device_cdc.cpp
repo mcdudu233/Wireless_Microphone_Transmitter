@@ -176,8 +176,11 @@ void USBCDCStream::_line_state_callback(uint8_t itf, bool dtr, bool rts)
   {
     if (rts)
     {
-      // 重启进入下载模式
-      REG_WRITE(RTC_CNTL_OPTION1_REG, RTC_CNTL_FORCE_DOWNLOAD_BOOT);
+      if (!dtr)
+      {
+        // 重启进入下载模式
+        REG_WRITE(RTC_CNTL_OPTION1_REG, RTC_CNTL_FORCE_DOWNLOAD_BOOT);
+      }
       REG_WRITE(RTC_CNTL_OPTIONS0_REG, RTC_CNTL_SW_SYS_RST);
     }
 
