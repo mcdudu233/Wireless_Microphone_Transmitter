@@ -10,18 +10,26 @@
 
 #define AUDIO_SERVICE_UUID "1843"
 #define DATA_CHARACTERISTIC_UUID "2b81"
-#define CONTROL_CHARACTERISTIC_UUID "2b7b"
+#define CONFIG_CONTROL_CHARACTERISTIC_UUID "2b7a"
+#define AUDIO_CONTROL_CHARACTERISTIC_UUID "2b7b"
 
-enum AudioControlMode
+enum ConfigControlMode
 {
   AUDIO_CONTROL_MODE_BLE = 0,
   AUDIO_CONTROL_MODE_WIFI = 1,
 };
 
-struct AudioControl
+struct ConfigControl
 {
   bool start = false;
   bool mode = AUDIO_CONTROL_MODE_BLE;
+  char name[32] = "";
+  char password[32] = "";
+};
+
+struct AudioControl
+{
+  bool start = false;
   uint8_t channel = 2;
   uint16_t rate = 48000;
   uint8_t bit = 16;

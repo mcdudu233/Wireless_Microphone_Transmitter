@@ -20,19 +20,22 @@ static BLECharacteristic *batteryCharacteristic = NULL;
 // 音频服务 用于传输音频数据
 static BLEService *audioService = NULL;
 static BLECharacteristic *dataCharacteristic = NULL;
-static BLECharacteristic *controlCharacteristic = NULL;
+static BLECharacteristic *configControlCharacteristic = NULL;
+static BLECharacteristic *audioControlCharacteristic = NULL;
 
 // 蓝牙状态
-bool clientConnected = false;
-bool clientAudio = false;
-bool clientAudioMode = AUDIO_CONTROL_MODE_BLE;
+static bool clientConnected = false;
+static ConfigControl clientConfigControl;
+static AudioControl clientAudioControl;
 
 class BLEServerCallback : public BLEServerCallbacks
 {
   void onConnect(BLEServer *pServer)
   {
     clientConnected = true;
-    logger::debugln("BLE Server has client connected.");
+    logger::debugln("BLE Server has client connected. For mtu=%d.", pServer->getPeerMTU(pServer->getConnId()));
+    pServer->updatePeerMTU(pServer->getConnId(), 517);
+    logger::debugln("BLE Server has client connected. For mtu=%d.", pServer->getPeerMTU(pServer->getConnId()));
     // Continue advertising for more connections
     // BLEDevice::startAdvertising();
   };
@@ -45,25 +48,28 @@ class BLEServerCallback : public BLEServerCallbacks
   }
 };
 
-class ControlCallback : public BLECharacteristicCallbacks
+class ConfigControlCallback : public BLECharacteristicCallbacks
 {
-  void onWrite(BLECharacteristic *characteristic)
+  void onWrite(BLECharacteristic *pCharacteristic)
   {
-    if (characteristic->getLength() > 0)
+    if (pCharacteristic->getLength() > 0)
+    {
+      // 获取到蓝牙配置数据包
+      clientConfigControl = *(ConfigControl *)pCharacteristic->getData();
+      logger::debugln("BLE set audio value {start=%d, name=%s, password=%s}.", clientConfigControl.start, clientConfigControl.name, clientConfigControl.password);
+    }
+  }
+};
+
+class AudioControlCallback : public BLECharacteristicCallbacks
+{
+  void onWrite(BLECharacteristic *pCharacteristic)
+  {
+    if (pCharacteristic->getLength() > 0)
     {
       // 获取到蓝牙音频控制数据包
-      AudioControl *value = (AudioControl *)characteristic->getData();
-      clientAudioMode = value->mode;
-      if (value->start)
-      {
-        clientAudio = true;
-      }
-      else
-      {
-        clientAudio = false;
-      }
-
-      logger::debugln("BLE set audio value {mode=%d, rate=%d, bit=%d}.", value->mode, value->rate, value->bit);
+      clientAudioControl = *(AudioControl *)pCharacteristic->getData();
+      logger::debugln("BLE set audio value {start=%d, rate=%d, bit=%d}.", clientAudioControl.start, clientAudioControl.rate, clientAudioControl.bit);
     }
   }
 };
@@ -74,8 +80,10 @@ static void ble_handle(void *arg)
   {
     if (clientConnected)
     {
-      if (clientAudio && clientAudioMode == AUDIO_CONTROL_MODE_BLE)
+      if (clientAudioControl.start && clientConfigControl.mode == AUDIO_CONTROL_MODE_BLE)
       {
+        // dataCharacteristic->setValue(data, size);
+        dataCharacteristic->notify();
       }
       vTaskDelay(1);
     }
@@ -90,6 +98,7 @@ void ble::setup()
 {
   logger::debugln("BLE is starting...");
   BLEDevice::init("Microphone Transmitter");
+  BLEDevice::setMTU(517);
 
   logger::debugln("BLE Server is starting...");
   // 创建GATT服务器
@@ -110,13 +119,20 @@ void ble::setup()
   batteryService = bleServer->createService(BATTERY_SERVICE_UUID);
   batteryCharacteristic = batteryService->createCharacteristic(BATTERY_CHARACTERISTIC_UUID, BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
   batteryCharacteristic->addDescriptor(new BLE2902());
+  batteryCharacteristic->setValue((uint8_t)100);
   batteryService->start();
   audioService = bleServer->createService(AUDIO_SERVICE_UUID);
   dataCharacteristic = audioService->createCharacteristic(DATA_CHARACTERISTIC_UUID, BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
   dataCharacteristic->addDescriptor(new BLE2902());
-  controlCharacteristic = audioService->createCharacteristic(CONTROL_CHARACTERISTIC_UUID, BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE);
-  controlCharacteristic->addDescriptor(new BLE2902());
-  controlCharacteristic->setCallbacks(new ControlCallback());
+  dataCharacteristic->setValue((uint32_t)0x00000000);
+  configControlCharacteristic = audioService->createCharacteristic(CONFIG_CONTROL_CHARACTERISTIC_UUID, BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_INDICATE);
+  configControlCharacteristic->addDescriptor(new BLE2902());
+  configControlCharacteristic->setCallbacks(new ConfigControlCallback());
+  configControlCharacteristic->setValue((uint8_t *)&clientConfigControl, sizeof(ConfigControl));
+  audioControlCharacteristic = audioService->createCharacteristic(AUDIO_CONTROL_CHARACTERISTIC_UUID, BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_INDICATE);
+  audioControlCharacteristic->addDescriptor(new BLE2902());
+  audioControlCharacteristic->setCallbacks(new AudioControlCallback());
+  audioControlCharacteristic->setValue((uint8_t *)&clientAudioControl, sizeof(AudioControl));
   audioService->start();
   logger::debugln("BLE Server is started.");
 
