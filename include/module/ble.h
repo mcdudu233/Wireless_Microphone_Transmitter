@@ -35,6 +35,12 @@ struct AudioControl
   uint8_t bit = 16;
 };
 
+struct AudioPacket
+{
+  uint32_t num;
+  uint8_t data[384];
+};
+
 namespace ble
 {
   void setup();

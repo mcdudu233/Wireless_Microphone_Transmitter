@@ -3,18 +3,19 @@
 #include "module/audio/power.h"
 #include "module/audio/encoder.h"
 
-#include "tusb.h"
+#include "cctype"
 #include "ESP_I2S.h"
 #include "wav_header.h"
-
-#include "module/usb/usb_device_cdc.h"
 
 static I2SClass I2S;
 static uint32_t i2s_rate;
 static i2s_data_bit_width_t i2s_bit;
-QueueHandle_t audio::encoder::data;
-
 static bool powerOn = false;
+
+// 循环缓冲区
+static AudioData *data;
+static uint8_t data_pointer;
+static uint32_t data_number;
 
 // 实时处理音频数据
 // static int64_t read_len = 0;
@@ -26,7 +27,7 @@ static void audioHandle(void *arg)
     // 启动了芯片才读取数据
     if (powerOn)
     {
-      delay(15 * 1000);
+      // 录制 WAV 测试
       // uint32_t sample_rate = 48000;
       // uint16_t sample_width = 32;
       // uint16_t num_channels = 2;
@@ -57,26 +58,20 @@ static void audioHandle(void *arg)
       // //   logger::debugln("%d Kbps", read_len * 8);
       // //   read_len = 0;
       // // }
-      // if (I2S.available() != -1)
-      // {
-      //   size_t size = i2s_rate * 4 * 2 / 1000;
-      //   char *buffer = new char[size];
-      //   if (I2S.readBytes(buffer, size) == size)
-      //   {
-      //     // if (xQueueSend(audio::encoder::data, (uint8_t *)buffer, 0) != pdTRUE)
-      //     // {
-      //     //   delete[] buffer;
-      //     //   logger::warnln("Audio Encoder's queue is full!");
-      //     // }
-      //     tud_audio_write(buffer, size);
-      //     delete[] buffer;
-      //   }
-      //   else
-      //   {
-      //     logger::warnln("Audio Encoder's I2S read fail! Size not same!");
-      //   }
-      //   // read_len++;
-      // }
+
+      if (I2S.available() != -1)
+      {
+        size_t size = i2s_rate * 32 * 2 / 8 / 1000;
+        AudioData *buffer = &data[data_pointer];
+        data_pointer = (data_pointer + 1) % AUDIO_ENCODER_MAX_BUFFER_SIZE;
+        buffer->num = data_number++ % UINT32_MAX;
+        buffer->size = size;
+        if (I2S.readBytes((char *)buffer->data, size) != size)
+        {
+          logger::warnln("Audio Encoder's I2S read fail! Size not same!");
+        }
+        // read_len++;
+      }
     }
     else
     {
@@ -87,7 +82,9 @@ static void audioHandle(void *arg)
 
 void audio::encoder::setup()
 {
-  audio::encoder::data = xQueueCreate(AUDIO_ENCODER_MAX_QUEUE_SIZE, sizeof(uint8_t *));
+  data = (AudioData *)heap_caps_malloc(sizeof(AudioData) * AUDIO_ENCODER_MAX_BUFFER_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_32BIT);
+  data_pointer = 0;
+  data_number = 0;
   pinMode(AUDIO_ENCODER_MD0, OUTPUT);
   pinMode(AUDIO_ENCODER_MD1, OUTPUT);
   digitalWrite(AUDIO_ENCODER_MD0, LOW);
@@ -160,5 +157,36 @@ void audio::encoder::setDRE(bool on)
   else
   {
     digitalWrite(AUDIO_ENCODER_MD1, LOW);
+  }
+}
+
+AudioData *audio::encoder::getData()
+{
+  return getDataFromIndex(0);
+}
+
+AudioData *audio::encoder::getDataFromIndex(uint8_t index)
+{
+  return &data[(data_pointer + AUDIO_ENCODER_MAX_BUFFER_SIZE - index) % AUDIO_ENCODER_MAX_BUFFER_SIZE];
+}
+
+AudioData *audio::encoder::getDataFromNumber(uint32_t number)
+{
+  int32_t now = getData()->num;
+  if (number > now)
+  {
+    return nullptr;
+  }
+  else if (number == now)
+  {
+    return getData();
+  }
+  else
+  {
+    if ((now - number) >= AUDIO_ENCODER_MAX_BUFFER_SIZE)
+    {
+      return nullptr;
+    }
+    return getDataFromIndex(now - number);
   }
 }

@@ -1,6 +1,7 @@
 #include "logger.h"
 #include "config.h"
 #include "module/ble.h"
+#include "module/audio/encoder.h"
 
 #include <BLEDevice.h>
 #include <BLEServer.h>
@@ -74,6 +75,7 @@ class AudioControlCallback : public BLECharacteristicCallbacks
   }
 };
 
+AudioPacket packet;
 static void ble_handle(void *arg)
 {
   while (true)
@@ -82,7 +84,10 @@ static void ble_handle(void *arg)
     {
       if (clientAudioControl.start && clientConfigControl.mode == AUDIO_CONTROL_MODE_BLE)
       {
-        // dataCharacteristic->setValue(data, size);
+        AudioData *data = audio::encoder::getData();
+        packet.num = data->num;
+        memcpy(packet.data, data->data, data->size);
+        dataCharacteristic->setValue((uint8_t *)&packet, sizeof(AudioPacket));
         dataCharacteristic->notify();
       }
       vTaskDelay(1);

@@ -9,13 +9,18 @@
 #define AUDIO_ENCODER_MD0 21
 #define AUDIO_ENCODER_MD1 18
 
-#define AUDIO_ENCODER_MAX_BUF_SIZE 1536
-#define AUDIO_ENCODER_MAX_QUEUE_SIZE 10
+#define AUDIO_ENCODER_MAX_DATA_SIZE 1536
+#define AUDIO_ENCODER_MAX_BUFFER_SIZE 10
+
+struct AudioData
+{
+  uint32_t num;
+  uint32_t size;
+  uint8_t data[AUDIO_ENCODER_MAX_DATA_SIZE];
+};
 
 namespace audio::encoder
 {
-  extern QueueHandle_t data;
-
   void setup();
   void on(uint32_t rate = 192 * 1000, uint32_t bit = 32);
   void off();
@@ -25,4 +30,9 @@ namespace audio::encoder
   void setLowLatencyFilter(bool on);
   // 设置 Dynamic Range Enhancer
   void setDRE(bool on);
+
+  // 获取音频数据
+  AudioData *getData();
+  AudioData *getDataFromIndex(uint8_t index);
+  AudioData *getDataFromNumber(uint32_t number);
 }
