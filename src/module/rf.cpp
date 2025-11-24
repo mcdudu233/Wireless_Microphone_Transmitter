@@ -65,7 +65,12 @@ class ConfigControlCallback : public BLECharacteristicCallbacks
     if (pCharacteristic->getLength() > 0)
     {
       // 获取到蓝牙配置数据包
-      configBasic = *(ConfigControl *)pCharacteristic->getData();
+      ConfigControl *tmp = (ConfigControl *)pCharacteristic->getData();
+      configBasic.start = tmp->start;
+      configBasic.mode = tmp->mode;
+      configBasic.ip = tmp->ip;
+      strcpy(configBasic.name, tmp->name);
+      strcpy(configBasic.password, tmp->password);
       logger::debugln("BLE set audio value {start=%d, name=%s, password=%s}.", configBasic.start, configBasic.name, configBasic.password);
     }
   }
