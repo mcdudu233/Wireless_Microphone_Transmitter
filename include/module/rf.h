@@ -25,6 +25,7 @@ struct ConfigControl
   bool mode = AUDIO_CONTROL_MODE_BLE;
   char name[32] = "";
   char password[32] = "";
+  uint32_t ip;
 };
 
 struct AudioControl
@@ -41,7 +42,7 @@ struct AudioPacket
   uint8_t data[384];
 };
 
-namespace ble
+namespace rf
 {
   void setup();
 }

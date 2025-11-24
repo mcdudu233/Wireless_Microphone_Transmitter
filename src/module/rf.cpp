@@ -1,12 +1,15 @@
 #include "logger.h"
 #include "config.h"
-#include "module/ble.h"
+#include "module/rf.h"
+#include "module/led.h"
 #include "module/audio/encoder.h"
 
-#include <BLEDevice.h>
-#include <BLEServer.h>
-#include <BLEUtils.h>
-#include <BLE2902.h>
+#include "BLEDevice.h"
+#include "BLEServer.h"
+#include "BLEUtils.h"
+#include "BLE2902.h"
+#include "WiFi.h"
+#include "NetworkUdp.h"
 
 // 蓝牙服务器
 static BLEServer *bleServer = NULL;
@@ -25,15 +28,21 @@ static BLECharacteristic *configControlCharacteristic = NULL;
 static BLECharacteristic *audioControlCharacteristic = NULL;
 
 // 蓝牙状态
-static bool clientConnected = false;
-static ConfigControl clientConfigControl;
-static AudioControl clientAudioControl;
+static bool bleConnected = false;
+static ConfigControl configBasic;
+static AudioControl configAudio;
+
+// WIFI传输
+static bool wifiConnected = false;
+static NetworkUDP wifiClient;
+static uint32_t wifiConnectIP;
+static uint32_t wifiConnectPort = 23333;
 
 class BLEServerCallback : public BLEServerCallbacks
 {
   void onConnect(BLEServer *pServer)
   {
-    clientConnected = true;
+    bleConnected = true;
     logger::debugln("BLE Server has client connected. For mtu=%d.", pServer->getPeerMTU(pServer->getConnId()));
     pServer->updatePeerMTU(pServer->getConnId(), 517);
     logger::debugln("BLE Server has client connected. For mtu=%d.", pServer->getPeerMTU(pServer->getConnId()));
@@ -43,7 +52,7 @@ class BLEServerCallback : public BLEServerCallbacks
 
   void onDisconnect(BLEServer *pServer)
   {
-    clientConnected = false;
+    bleConnected = false;
     BLEDevice::startAdvertising();
     logger::debugln("BLE Server has client disconnected.");
   }
@@ -56,8 +65,8 @@ class ConfigControlCallback : public BLECharacteristicCallbacks
     if (pCharacteristic->getLength() > 0)
     {
       // 获取到蓝牙配置数据包
-      clientConfigControl = *(ConfigControl *)pCharacteristic->getData();
-      logger::debugln("BLE set audio value {start=%d, name=%s, password=%s}.", clientConfigControl.start, clientConfigControl.name, clientConfigControl.password);
+      configBasic = *(ConfigControl *)pCharacteristic->getData();
+      logger::debugln("BLE set audio value {start=%d, name=%s, password=%s}.", configBasic.start, configBasic.name, configBasic.password);
     }
   }
 };
@@ -69,8 +78,8 @@ class AudioControlCallback : public BLECharacteristicCallbacks
     if (pCharacteristic->getLength() > 0)
     {
       // 获取到蓝牙音频控制数据包
-      clientAudioControl = *(AudioControl *)pCharacteristic->getData();
-      logger::debugln("BLE set audio value {start=%d, rate=%d, bit=%d}.", clientAudioControl.start, clientAudioControl.rate, clientAudioControl.bit);
+      configAudio = *(AudioControl *)pCharacteristic->getData();
+      logger::debugln("BLE set audio value {start=%d, rate=%d, bit=%d}.", configAudio.start, configAudio.rate, configAudio.bit);
     }
   }
 };
@@ -80,15 +89,78 @@ static void ble_handle(void *arg)
 {
   while (true)
   {
-    if (clientConnected)
+    if (bleConnected)
     {
-      if (clientAudioControl.start && clientConfigControl.mode == AUDIO_CONTROL_MODE_BLE)
+      if (configBasic.start)
       {
-        AudioData *data = audio::encoder::getData();
-        packet.num = data->num;
-        memcpy(packet.data, data->data, data->size);
-        dataCharacteristic->setValue((uint8_t *)&packet, sizeof(AudioPacket));
-        dataCharacteristic->notify();
+        switch (configBasic.mode)
+        {
+        case AUDIO_CONTROL_MODE_BLE:
+        {
+          if (!bleConnected)
+          {
+            // 默认已经启动了蓝牙
+          }
+          break;
+        }
+        case AUDIO_CONTROL_MODE_WIFI:
+        {
+          if (!wifiConnected)
+          {
+            logger::debugln("WiFi is starting...");
+            WiFi.mode(WIFI_STA);
+            if (WiFi.begin(configBasic.name, configBasic.password) == WL_CONNECT_FAILED)
+            {
+              WiFi.mode(WIFI_OFF);
+              logger::warnln("WiFi started fail!");
+              break;
+            }
+            // 等待 WIFI 连接
+            logger::debugln("WiFi is waiting for connect...");
+            while (WiFi.status() != WL_CONNECTED)
+            {
+              delay(10);
+            }
+            logger::debugln("WiFi is connected for IP %s.", WiFi.localIP().toString());
+            logger::debugln("WiFi is starting client...");
+            // 启动客户端
+            ip_addr_t ip;
+            WiFi.localIP().to_ip_addr_t(&ip);
+            wifiConnectIP = ip.u_addr.ip4.addr & 0xFFFFFF00 + 0x00000001; // 获取网络地址的第一个主机
+            if (!wifiClient.begin(wifiConnectIP, wifiConnectPort))
+            {
+              WiFi.mode(WIFI_OFF);
+              logger::warnln("WiFi started client fail!");
+              break;
+            }
+            wifiConnected = true;
+            logger::debugln("WiFi is started.");
+          }
+          break;
+        }
+        }
+      }
+      if (configAudio.start)
+      {
+        switch (configBasic.mode)
+        {
+        case AUDIO_CONTROL_MODE_BLE:
+        {
+          // AudioData *data = audio::encoder::getData();
+          // packet.num = data->num;
+          // memcpy(packet.data, data->data, data->size);
+          // dataCharacteristic->setValue((uint8_t *)&packet, sizeof(AudioPacket));
+          // dataCharacteristic->notify();
+          break;
+        }
+        case AUDIO_CONTROL_MODE_WIFI:
+        {
+          wifiClient.beginPacket();
+          wifiClient.printf("Seconds since boot: %lu", millis() / 1000);
+          wifiClient.endPacket();
+          break;
+        }
+        }
       }
       vTaskDelay(1);
     }
@@ -99,9 +171,10 @@ static void ble_handle(void *arg)
   }
 }
 
-void ble::setup()
+void rf::setup()
 {
   logger::debugln("BLE is starting...");
+  led::blue();
   BLEDevice::init("Microphone Transmitter");
   BLEDevice::setMTU(517);
 
@@ -133,11 +206,11 @@ void ble::setup()
   configControlCharacteristic = audioService->createCharacteristic(CONFIG_CONTROL_CHARACTERISTIC_UUID, BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_INDICATE);
   configControlCharacteristic->addDescriptor(new BLE2902());
   configControlCharacteristic->setCallbacks(new ConfigControlCallback());
-  configControlCharacteristic->setValue((uint8_t *)&clientConfigControl, sizeof(ConfigControl));
+  configControlCharacteristic->setValue((uint8_t *)&configBasic, sizeof(ConfigControl));
   audioControlCharacteristic = audioService->createCharacteristic(AUDIO_CONTROL_CHARACTERISTIC_UUID, BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_INDICATE);
   audioControlCharacteristic->addDescriptor(new BLE2902());
   audioControlCharacteristic->setCallbacks(new AudioControlCallback());
-  audioControlCharacteristic->setValue((uint8_t *)&clientAudioControl, sizeof(AudioControl));
+  audioControlCharacteristic->setValue((uint8_t *)&configAudio, sizeof(AudioControl));
   audioService->start();
   logger::debugln("BLE Server is started.");
 
@@ -151,8 +224,14 @@ void ble::setup()
   bleAdvertising->setMinPreferred(0x0); // set value to 0x00 to not advertise this parameter
   bleAdvertising->setAppearance(0x0221);
   BLEDevice::startAdvertising();
-  logger::debugln("BLE is started.");
 
   // 启动蓝牙发送线程
   xTaskCreatePinnedToCore(ble_handle, "ble_handle", TASK_BLE_STACK, NULL, TASK_BLE_PRIORITY, NULL, TASK_BLE_CORE);
+
+  led::black();
+  logger::debugln("BLE is started.");
+
+  // 默认关闭 WIFI
+  WiFi.mode(WIFI_OFF);
+  logger::debugln("WiFi is off.");
 }

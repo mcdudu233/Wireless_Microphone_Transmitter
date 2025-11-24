@@ -4,20 +4,22 @@
 #include "module/audio/power.h"
 #include "module/audio/encoder.h"
 #include "module/usb/usb.h"
-#include "module/ble.h"
+#include "module/rf.h"
 
 #include "module/usb/usb_device_cdc.h"
 #include "esp_psram.h"
 
 void setup()
 {
-  usb::setup();
   logger::setup();
   led::setup();
+  led::green();
   voltage::setup();
   audio::power::setup();
   audio::encoder::setup();
-  ble::setup();
+  usb::setup();
+  rf::setup();
+
   logger::infoln("All modules are started now!");
 
   audio::encoder::on(48000);
