@@ -39,7 +39,7 @@ struct AudioControl
 struct AudioPacket
 {
   uint32_t num;
-  uint8_t data[384];
+  uint8_t data[1536];
 };
 
 namespace rf

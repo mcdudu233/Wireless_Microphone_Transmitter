@@ -17,12 +17,10 @@ void setup()
   voltage::setup();
   audio::power::setup();
   audio::encoder::setup();
-  usb::setup();
+  // usb::setup();
   rf::setup();
 
   logger::infoln("All modules are started now!");
-
-  audio::encoder::on(48000);
 }
 
 void loop()
@@ -33,21 +31,15 @@ void loop()
   // delay(100);
   // logger::infoln("VCC: %D", voltage::getVCCVoltage());
   // logger::infoln("BAT: %D", voltage::getBATVoltage());
-  // if (esp_psram_is_initialized())
-  // {
-  //   logger::debugln("PSRAM is enabled.\n");
 
-  //   // 获取 PSRAM 总大小
-  //   size_t psram_total = esp_psram_get_size();
-  //   logger::debugln("Total PSRAM: %u bytes\n", psram_total);
-
-  //   // 获取 PSRAM 剩余空间
-  //   size_t psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
-  //   logger::debugln("Free PSRAM: %u bytes\n", psram_free);
-  // }
-  // else
-  // {
-  //   logger::debugln("PSRAM is not enabled.\n");
-  // }
+  logger::debugln("Internal:\n");
+  logger::debugln("  Total: %d bytes\n", heap_caps_get_total_size(MALLOC_CAP_INTERNAL));
+  logger::debugln("  Free: %d bytes\n", heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+  logger::debugln("  Min Free: %d bytes\n", heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
+  // PSRAM
+  logger::debugln("PSRAM:\n");
+  logger::debugln("  Total: %d bytes\n", heap_caps_get_total_size(MALLOC_CAP_SPIRAM));
+  logger::debugln("  Free: %d bytes\n", heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+  logger::debugln("  Min Free: %d bytes\n", heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM));
   delay(1000);
 }

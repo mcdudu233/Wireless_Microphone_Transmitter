@@ -2,14 +2,19 @@
 
 #include "queue.h"
 
-#define AUDIO_ENCODER_WS 17
-#define AUDIO_ENCODER_CLK 16
-#define AUDIO_ENCODER_SD 15
+#define AUDIO_ENCODER_WS GPIO_NUM_17
+#define AUDIO_ENCODER_CLK GPIO_NUM_16
+#define AUDIO_ENCODER_SD GPIO_NUM_15
 
-#define AUDIO_ENCODER_MD0 21
-#define AUDIO_ENCODER_MD1 18
+#define AUDIO_ENCODER_MD0 GPIO_NUM_21
+#define AUDIO_ENCODER_MD1 GPIO_NUM_18
 
-#define AUDIO_ENCODER_MAX_DATA_SIZE 1536
+#define AUDIO_ENCODER_POLLING_CYCLE 3 // ms 决定了麦克风的延迟
+#define AUDIO_ENCODER_RATE 192000     // 最大频率
+#define AUDIO_ENCODER_BIT 32          // 固定的比特数
+#define AUDIO_ENCODER_CHANNEL 2       // 固定的通道数
+
+#define AUDIO_ENCODER_MAX_DATA_SIZE (AUDIO_ENCODER_RATE * AUDIO_ENCODER_BIT * AUDIO_ENCODER_CHANNEL / 8 * AUDIO_ENCODER_POLLING_CYCLE / 1000)
 #define AUDIO_ENCODER_MAX_BUFFER_SIZE 10
 
 struct AudioData
@@ -32,6 +37,7 @@ namespace audio::encoder
   void setDRE(bool on);
 
   // 获取音频数据
+  uint8_t getNumber();
   AudioData *getData();
   AudioData *getDataFromIndex(uint8_t index);
   AudioData *getDataFromNumber(uint32_t number);

@@ -1,6 +1,7 @@
 #pragma once
 
 #define TASK_AUDIO_ENCODER_CORE 0
+#define TASK_AUDIO_ENCODER_PERIOD 3 // 这里必须和编码器轮询周期一样！
 #define TASK_AUDIO_ENCODER_PRIORITY 2
 #define TASK_AUDIO_ENCODER_STACK 4096
 
@@ -8,6 +9,6 @@
 #define TASK_TUSB_PRIORITY 3
 #define TASK_TUSB_STACK 4096
 
-#define TASK_BLE_CORE 1
-#define TASK_BLE_PRIORITY 1
-#define TASK_BLE_STACK 4096
+#define TASK_RF_CORE 1
+#define TASK_RF_PRIORITY 1
+#define TASK_RF_STACK 4096

@@ -10,6 +10,7 @@
 #include "BLE2902.h"
 #include "WiFi.h"
 #include "NetworkUdp.h"
+#include "esp_wifi.h"
 
 // 蓝牙服务器
 static BLEServer *bleServer = NULL;
@@ -35,8 +36,8 @@ static AudioControl configAudio;
 // WIFI传输
 static bool wifiConnected = false;
 static NetworkUDP wifiClient;
-static uint32_t wifiConnectIP;
-static uint32_t wifiConnectPort = 23333;
+static IPAddress wifiConnectIP;
+static uint32_t wifiConnectPort = 3333;
 
 class BLEServerCallback : public BLEServerCallbacks
 {
@@ -71,7 +72,7 @@ class ConfigControlCallback : public BLECharacteristicCallbacks
       configBasic.ip = tmp->ip;
       strcpy(configBasic.name, tmp->name);
       strcpy(configBasic.password, tmp->password);
-      logger::debugln("BLE set audio value {start=%d, name=%s, password=%s}.", configBasic.start, configBasic.name, configBasic.password);
+      logger::debugln("BLE set config value {start=%d, mode=%d, name=%s, password=%s}.", configBasic.start, configBasic.mode, configBasic.name, configBasic.password);
     }
   }
 };
@@ -89,8 +90,9 @@ class AudioControlCallback : public BLECharacteristicCallbacks
   }
 };
 
-AudioPacket packet;
-static void ble_handle(void *arg)
+static AudioPacket packet;
+static uint32_t packet_last_num;
+static void rf_handle(void *arg)
 {
   while (true)
   {
@@ -113,6 +115,7 @@ static void ble_handle(void *arg)
           if (!wifiConnected)
           {
             logger::debugln("WiFi is starting...");
+            WiFi.useStaticBuffers(true); // 使用静态存储TX缓存 增大UDP缓存
             WiFi.mode(WIFI_STA);
             if (WiFi.begin(configBasic.name, configBasic.password) == WL_CONNECT_FAILED)
             {
@@ -120,6 +123,7 @@ static void ble_handle(void *arg)
               logger::warnln("WiFi started fail!");
               break;
             }
+
             // 等待 WIFI 连接
             logger::debugln("WiFi is waiting for connect...");
             while (WiFi.status() != WL_CONNECTED)
@@ -129,10 +133,8 @@ static void ble_handle(void *arg)
             logger::debugln("WiFi is connected for IP %s.", WiFi.localIP().toString());
             logger::debugln("WiFi is starting client...");
             // 启动客户端
-            ip_addr_t ip;
-            WiFi.localIP().to_ip_addr_t(&ip);
-            wifiConnectIP = ip.u_addr.ip4.addr & 0xFFFFFF00 + 0x00000001; // 获取网络地址的第一个主机
-            if (!wifiClient.begin(wifiConnectIP, wifiConnectPort))
+            wifiConnectIP = WiFi.gatewayIP();
+            if (!wifiClient.begin(WiFi.localIP(), wifiConnectPort))
             {
               WiFi.mode(WIFI_OFF);
               logger::warnln("WiFi started client fail!");
@@ -160,9 +162,22 @@ static void ble_handle(void *arg)
         }
         case AUDIO_CONTROL_MODE_WIFI:
         {
-          wifiClient.beginPacket();
-          wifiClient.printf("Seconds since boot: %lu", millis() / 1000);
-          wifiClient.endPacket();
+          if (!audio::encoder::isOn())
+          {
+            audio::encoder::on(configAudio.rate, configAudio.bit);
+          }
+
+          AudioData *tmp = audio::encoder::getData();
+          if (tmp->size > 0 && tmp->num > packet_last_num)
+          {
+            packet_last_num = tmp->num;
+            packet.num = tmp->num;
+            // logger::debugln("%d", packet.num);
+            memcpy(packet.data, tmp->data, tmp->size);
+            wifiClient.beginPacket(wifiConnectIP, wifiConnectPort);
+            wifiClient.write((uint8_t *)&packet, sizeof(packet.num) + tmp->size);
+            wifiClient.endPacket();
+          }
           break;
         }
         }
@@ -231,7 +246,7 @@ void rf::setup()
   BLEDevice::startAdvertising();
 
   // 启动蓝牙发送线程
-  xTaskCreatePinnedToCore(ble_handle, "ble_handle", TASK_BLE_STACK, NULL, TASK_BLE_PRIORITY, NULL, TASK_BLE_CORE);
+  xTaskCreatePinnedToCore(rf_handle, "rf_handle", TASK_RF_STACK, NULL, TASK_RF_PRIORITY, NULL, TASK_RF_CORE);
 
   led::black();
   logger::debugln("BLE is started.");
