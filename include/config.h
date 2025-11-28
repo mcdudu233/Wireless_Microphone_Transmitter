@@ -10,5 +10,6 @@
 #define TASK_TUSB_STACK 4096
 
 #define TASK_RF_CORE 1
+#define TASK_RF_PERIOD 1
 #define TASK_RF_PRIORITY 1
 #define TASK_RF_STACK 4096

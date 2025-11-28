@@ -35,7 +35,8 @@ static AudioControl configAudio;
 
 // WIFI传输
 static bool wifiConnected = false;
-static NetworkUDP wifiClient;
+static NetworkUDP wifiUDPClient;
+static NetworkClient wifiTCPClient;
 static IPAddress wifiConnectIP;
 static uint32_t wifiConnectPort = 3333;
 
@@ -94,8 +95,12 @@ static AudioPacket packet;
 static uint32_t packet_last_num;
 static void rf_handle(void *arg)
 {
+  TickType_t xLastWakeTime = xTaskGetTickCount();
+  const TickType_t xFrequency = pdMS_TO_TICKS(TASK_RF_PERIOD);
   while (true)
   {
+    xTaskDelayUntil(&xLastWakeTime, xFrequency);
+
     if (bleConnected)
     {
       if (configBasic.start)
@@ -110,7 +115,8 @@ static void rf_handle(void *arg)
           }
           break;
         }
-        case AUDIO_CONTROL_MODE_WIFI:
+        case AUDIO_CONTROL_MODE_WIFI_UDP:
+        case AUDIO_CONTROL_MODE_WIFI_TCP:
         {
           if (!wifiConnected)
           {
@@ -134,11 +140,23 @@ static void rf_handle(void *arg)
             logger::debugln("WiFi is starting client...");
             // 启动客户端
             wifiConnectIP = WiFi.gatewayIP();
-            if (!wifiClient.begin(WiFi.localIP(), wifiConnectPort))
+            if (configBasic.mode == AUDIO_CONTROL_MODE_WIFI_UDP)
             {
-              WiFi.mode(WIFI_OFF);
-              logger::warnln("WiFi started client fail!");
-              break;
+              if (!wifiUDPClient.begin(WiFi.localIP(), wifiConnectPort))
+              {
+                WiFi.mode(WIFI_OFF);
+                logger::warnln("WiFi started client fail!");
+                break;
+              }
+            }
+            else if (configBasic.mode == AUDIO_CONTROL_MODE_WIFI_TCP)
+            {
+              if (!wifiTCPClient.connect(wifiConnectIP, wifiConnectPort))
+              {
+                WiFi.mode(WIFI_OFF);
+                logger::warnln("WiFi started client fail!");
+                break;
+              }
             }
             wifiConnected = true;
             logger::debugln("WiFi is started.");
@@ -149,44 +167,64 @@ static void rf_handle(void *arg)
       }
       if (configAudio.start)
       {
-        switch (configBasic.mode)
+        // 先开启音频编码器
+        if (!audio::encoder::isOn())
         {
-        case AUDIO_CONTROL_MODE_BLE:
-        {
-          // AudioData *data = audio::encoder::getData();
-          // packet.num = data->num;
-          // memcpy(packet.data, data->data, data->size);
-          // dataCharacteristic->setValue((uint8_t *)&packet, sizeof(AudioPacket));
-          // dataCharacteristic->notify();
-          break;
+          audio::encoder::on(configAudio.rate, configAudio.bit);
         }
-        case AUDIO_CONTROL_MODE_WIFI:
-        {
-          if (!audio::encoder::isOn())
-          {
-            audio::encoder::on(configAudio.rate, configAudio.bit);
-          }
 
-          AudioData *tmp = audio::encoder::getData();
-          if (tmp->size > 0 && tmp->num > packet_last_num)
+        AudioData *tmp = audio::encoder::getData();
+        if (tmp->size > 0 && tmp->num > packet_last_num)
+        {
+          packet_last_num = tmp->num;
+          packet.num = tmp->num;
+          memcpy(packet.data, tmp->data, tmp->size);
+          size_t packet_size = sizeof(packet.num) + tmp->size;
+          // 选择指定协议发送出去
+          switch (configBasic.mode)
           {
-            packet_last_num = tmp->num;
-            packet.num = tmp->num;
-            // logger::debugln("%d", packet.num);
-            memcpy(packet.data, tmp->data, tmp->size);
-            wifiClient.beginPacket(wifiConnectIP, wifiConnectPort);
-            wifiClient.write((uint8_t *)&packet, sizeof(packet.num) + tmp->size);
-            wifiClient.endPacket();
+          case AUDIO_CONTROL_MODE_BLE:
+          {
+            dataCharacteristic->setValue((uint8_t *)&packet, packet_size);
+            dataCharacteristic->notify();
+            break;
           }
-          break;
-        }
+          case AUDIO_CONTROL_MODE_WIFI_UDP:
+          {
+
+            AudioData *tmp = audio::encoder::getData();
+            if (tmp->size > 0 && tmp->num > packet_last_num)
+            {
+              // logger::debugln("%d", packet.num);
+              wifiUDPClient.beginPacket(wifiConnectIP, wifiConnectPort);
+              wifiUDPClient.write((uint8_t *)&packet, packet_size);
+              wifiUDPClient.endPacket();
+            }
+            break;
+          }
+          case AUDIO_CONTROL_MODE_WIFI_TCP:
+          {
+            if (wifiTCPClient.connected())
+            {
+              wifiTCPClient.write((uint8_t *)&packet, packet_size);
+            }
+            else
+            {
+              logger::warnln("WiFi TCP is down, reconnet!");
+              if (!wifiTCPClient.connect(wifiConnectIP, wifiConnectPort))
+              {
+                logger::warnln("WiFi TCP started client fail!");
+              }
+            }
+            break;
+          }
+          }
         }
       }
-      vTaskDelay(1);
     }
     else
     {
-      vTaskDelay(10);
+      delay(10);
     }
   }
 }

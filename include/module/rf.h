@@ -16,13 +16,14 @@
 enum ConfigControlMode
 {
   AUDIO_CONTROL_MODE_BLE = 0,
-  AUDIO_CONTROL_MODE_WIFI = 1,
+  AUDIO_CONTROL_MODE_WIFI_UDP = 1,
+  AUDIO_CONTROL_MODE_WIFI_TCP = 2,
 };
 
 struct ConfigControl
 {
   bool start = false;
-  bool mode = AUDIO_CONTROL_MODE_BLE;
+  ConfigControlMode mode = AUDIO_CONTROL_MODE_BLE;
   char name[32] = "";
   char password[32] = "";
   uint32_t ip;

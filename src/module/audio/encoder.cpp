@@ -5,7 +5,6 @@
 
 #include "cctype"
 #include "ESP_I2S.h"
-#include "wav_header.h"
 
 static i2s_chan_handle_t i2s_rx_handle;
 static i2s_chan_config_t i2s_chan_cfg = {
@@ -89,7 +88,7 @@ static void audioHandle(void *arg)
       data_pointer = (data_pointer + 1) % AUDIO_ENCODER_MAX_BUFFER_SIZE;
       buffer.num = data_number++ % UINT32_MAX;
       buffer.size = size;
-      if (i2s_channel_read(i2s_rx_handle, buffer.data, size, NULL, AUDIO_ENCODER_POLLING_CYCLE) != ESP_OK)
+      if (i2s_channel_read(i2s_rx_handle, buffer.data, size, NULL, AUDIO_ENCODER_POLLING_CYCLE * 2) != ESP_OK)
       {
         logger::warnln("Audio Encoder's I2S read fail! Size not same!");
       }
@@ -100,6 +99,7 @@ static void audioHandle(void *arg)
 
 void audio::encoder::setup()
 {
+  logger::debugln("Audio Encoder is starting...");
   data = (AudioData *)heap_caps_malloc(sizeof(AudioData) * AUDIO_ENCODER_MAX_BUFFER_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_32BIT);
   pinMode(AUDIO_ENCODER_MD0, OUTPUT);
   pinMode(AUDIO_ENCODER_MD1, OUTPUT);
