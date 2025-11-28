@@ -93,6 +93,7 @@ class AudioControlCallback : public BLECharacteristicCallbacks
 
 static AudioPacket packet;
 static uint32_t packet_last_num;
+static unsigned long last_time = millis();
 static void rf_handle(void *arg)
 {
   TickType_t xLastWakeTime = xTaskGetTickCount();
@@ -158,6 +159,10 @@ static void rf_handle(void *arg)
                 break;
               }
             }
+            // 返回客户端IP
+            configBasic.ip = (uint32_t)WiFi.localIP();
+            configControlCharacteristic->setValue((uint8_t *)&configBasic, sizeof(ConfigControl));
+            configControlCharacteristic->indicate();
             wifiConnected = true;
             logger::debugln("WiFi is started.");
           }
@@ -206,6 +211,9 @@ static void rf_handle(void *arg)
           {
             if (wifiTCPClient.connected())
             {
+              unsigned long now_time = millis();
+              logger::debugln("%d", now_time - last_time);
+              last_time = now_time;
               wifiTCPClient.write((uint8_t *)&packet, packet_size);
             }
             else
