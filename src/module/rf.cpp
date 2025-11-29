@@ -197,14 +197,10 @@ static void rf_handle(void *arg)
           case AUDIO_CONTROL_MODE_WIFI_UDP:
           {
 
-            AudioData *tmp = audio::encoder::getData();
-            if (tmp->size > 0 && tmp->num > packet_last_num)
-            {
-              // logger::debugln("%d", packet.num);
-              wifiUDPClient.beginPacket(wifiConnectIP, wifiConnectPort);
-              wifiUDPClient.write((uint8_t *)&packet, packet_size);
-              wifiUDPClient.endPacket();
-            }
+            // logger::debugln("%d", packet.num);
+            wifiUDPClient.beginPacket(wifiConnectIP, wifiConnectPort);
+            wifiUDPClient.write((uint8_t *)&packet, packet_size);
+            wifiUDPClient.endPacket();
             break;
           }
           case AUDIO_CONTROL_MODE_WIFI_TCP:
