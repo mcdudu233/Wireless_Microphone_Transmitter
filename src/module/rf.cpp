@@ -54,8 +54,9 @@ class BLEServerCallback : public BLEServerCallbacks
 
   void onDisconnect(BLEServer *pServer)
   {
-    bleConnected = false;
-    BLEDevice::startAdvertising();
+    // bleConnected = false;
+    // BLEDevice::startAdvertising();
+    BLEDevice::deinit();
     logger::debugln("BLE Server has client disconnected.");
   }
 };
@@ -93,7 +94,6 @@ class AudioControlCallback : public BLECharacteristicCallbacks
 
 static AudioPacket packet;
 static uint32_t packet_last_num;
-static unsigned long last_time = millis();
 static void rf_handle(void *arg)
 {
   TickType_t xLastWakeTime = xTaskGetTickCount();
@@ -207,9 +207,7 @@ static void rf_handle(void *arg)
           {
             if (wifiTCPClient.connected())
             {
-              unsigned long now_time = millis();
-              logger::debugln("%d", now_time - last_time);
-              last_time = now_time;
+              // logger::debugln("%d", packet.num);
               wifiTCPClient.write((uint8_t *)&packet, packet_size);
             }
             else

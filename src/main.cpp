@@ -25,21 +25,15 @@ void setup()
 
 void loop()
 {
-  // led::blue();
-  // delay(100);
-  // led::black();
-  // delay(100);
-  // logger::infoln("VCC: %D", voltage::getVCCVoltage());
-  // logger::infoln("BAT: %D", voltage::getBATVoltage());
-
-  // logger::debugln("Internal:\n");
-  // logger::debugln("  Total: %d bytes\n", heap_caps_get_total_size(MALLOC_CAP_INTERNAL));
-  // logger::debugln("  Free: %d bytes\n", heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
-  // logger::debugln("  Min Free: %d bytes\n", heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
-  // // PSRAM
-  // logger::debugln("PSRAM:\n");
-  // logger::debugln("  Total: %d bytes\n", heap_caps_get_total_size(MALLOC_CAP_SPIRAM));
-  // logger::debugln("  Free: %d bytes\n", heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
-  // logger::debugln("  Min Free: %d bytes\n", heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM));
-  delay(1000);
+  // IRAM
+  logger::debugln("Internal:\n");
+  logger::debugln("  Total: %d bytes\n", heap_caps_get_total_size(MALLOC_CAP_INTERNAL));
+  logger::debugln("  Free: %d bytes\n", heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+  logger::debugln("  Min Free: %d bytes\n", heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
+  // PSRAM
+  logger::debugln("PSRAM:\n");
+  logger::debugln("  Total: %d bytes\n", heap_caps_get_total_size(MALLOC_CAP_SPIRAM));
+  logger::debugln("  Free: %d bytes\n", heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+  logger::debugln("  Min Free: %d bytes\n", heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM));
+  delay(10000);
 }
