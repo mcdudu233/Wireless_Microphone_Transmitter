@@ -5,6 +5,7 @@
 #include "module/audio/encoder.h"
 
 #include "string"
+#include "vector"
 
 static ConfigServerControl configBasic;
 static AudioServerControl configAudio;
@@ -75,7 +76,7 @@ static bool socket_open(bool isTCP, uint32_t hostIP, uint16_t hostPort)
   {
     socketNumber = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
   }
-  socketDestination.sin_addr.s_addr = htonl(hostIP);
+  socketDestination.sin_addr.s_addr = hostIP;
   socketDestination.sin_family = AF_INET;
   socketDestination.sin_port = htons(hostPort);
   fcntl(socketNumber, F_SETFL, O_NONBLOCK); // 不阻塞
@@ -93,7 +94,9 @@ static bool socket_open(bool isTCP, uint32_t hostIP, uint16_t hostPort)
   }
 
   socketIsOpen = true;
-  logger::debugln("Socket is started.");
+  logger::debugln("Socket is started for IP %d.%d.%d.%d, port %d.",
+                  ((uint8_t *)&hostIP)[0], ((uint8_t *)&hostIP)[1], ((uint8_t *)&hostIP)[2], ((uint8_t *)&hostIP)[3],
+                  hostPort);
   return true;
 }
 /****************************/
@@ -214,24 +217,21 @@ static bool wifi_open(const char *ssid, const char *password)
                                          pdFALSE,
                                          portMAX_DELAY);
 
+  wifiIsOpen = true;
+  logger::debugln("WiFi is started for local IP %d.%d.%d.%d, gateway IP %d.%d.%d.%d.",
+                  ((uint8_t *)&wifiIP)[0], ((uint8_t *)&wifiIP)[1], ((uint8_t *)&wifiIP)[2], ((uint8_t *)&wifiIP)[3],
+                  ((uint8_t *)&wifiGatewayIP)[0], ((uint8_t *)&wifiGatewayIP)[1], ((uint8_t *)&wifiGatewayIP)[2], ((uint8_t *)&wifiGatewayIP)[3]);
+
   /* xEventGroupWaitBits() returns the bits before the call returned, hence we can test which event actually
    * happened. */
-  // if (bits & WIFI_CONNECTED_BIT)
-  // {
-  //   logger::debugln("connected to ap SSID:%s password:%s", ssid, password);
-  // }
-  // else if (bits & WIFI_FAIL_BIT)
-  // {
-  //   logger::debugln("Failed to connect to SSID:%s, password:%s", ssid, password);
-  // }
-  // else
-  // {
-  //   logger::debugln("UNEXPECTED EVENT");
-  // }
-
-  wifiIsOpen = true;
-  logger::debugln("WiFi is started.");
-  return true;
+  if (bits & WIFI_CONNECTED_BIT)
+  {
+    return true;
+  }
+  else
+  {
+    return false;
+  }
 }
 /****************************/
 
@@ -254,6 +254,7 @@ static uint16_t bleGattcInterface = ESP_GATT_IF_NONE;
 static uint16_t bleInfoServiceHandle;
 static uint16_t bleBatteryServiceHandle;
 static uint16_t bleAudioServiceHandle;
+
 static uint16_t bleDeviceCharHandle;
 static uint16_t bleModelCharHandle;
 static uint16_t bleManufacturerCharHandle;
@@ -261,6 +262,8 @@ static uint16_t bleBatteryCharHandle;
 static uint16_t bleDataCharHandle;
 static uint16_t bleConfigControlCharHandle;
 static uint16_t bleAudioControlCharHandle;
+
+static std::vector<uint16_t> bleAttrHandle;
 
 // 特征属性值
 static const char *bleDeviceCharValue = "Wireless Microphone Transmitter";
@@ -422,6 +425,7 @@ static bool ble_open();
 static bool ble_close();
 static void ble_config_control_handler(uint8_t *data)
 {
+  logger::debugln("BLE get config control.");
   ConfigServerControl *src = (ConfigServerControl *)data;
   if (configBasic.mode != src->mode)
   {
@@ -447,6 +451,10 @@ static void ble_config_control_handler(uint8_t *data)
       if (wifi_open(configBasic.name, configBasic.password))
       {
         socket_open(configBasic.mode == AUDIO_CONTROL_MODE_WIFI_TCP, wifiGatewayIP, configBasic.port);
+      }
+      else
+      {
+        wifi_close();
       }
     }
     else
@@ -476,6 +484,7 @@ static void ble_config_control_handler(uint8_t *data)
 // 接收到音频配置包
 static void ble_audio_control_handler(uint8_t *data)
 {
+  logger::debugln("BLE get audio control.");
   AudioServerControl *src = (AudioServerControl *)data;
   if (configAudio.channel != src->channel)
   {
@@ -519,6 +528,7 @@ static void ble_stop_advertising()
 {
   if (bleIsAdvertising)
   {
+    led::black();
     esp_ble_gap_stop_advertising();
     bleIsAdvertising = false;
   }
@@ -528,6 +538,7 @@ static void ble_start_advertising()
 {
   if (!bleIsAdvertising)
   {
+    led::blue();
     // 配置广告数据
     esp_ble_gap_config_adv_data(&bleAdvertisingData);
     esp_ble_gap_config_adv_data(&bleAdvertisingScanData);
@@ -549,6 +560,7 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
       logger::warnln("BLE advertising start failed, status %d", param->adv_start_cmpl.status);
       break;
     }
+    bleIsAdvertising = true;
     logger::debugln("BLE advertising start successfully.");
     break;
   }
@@ -561,26 +573,8 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
       logger::warnln("BLE advertising stop failed, status %d", param->adv_stop_cmpl.status);
       break;
     }
+    bleIsAdvertising = false;
     logger::debugln("BLE advertising stop successfully");
-    break;
-  }
-
-  case ESP_GAP_BLE_UPDATE_CONN_PARAMS_EVT:
-  {
-    logger::debugln("BLE connection params update, status %d, conn_int %d, latency %d, timeout %d",
-                    param->update_conn_params.status,
-                    param->update_conn_params.conn_int,
-                    param->update_conn_params.latency,
-                    param->update_conn_params.timeout);
-    break;
-  }
-
-  case ESP_GAP_BLE_SET_PKT_LENGTH_COMPLETE_EVT:
-  {
-    logger::debugln("BLE packet length update, status %d, rx %d, tx %d",
-                    param->pkt_data_length_cmpl.status,
-                    param->pkt_data_length_cmpl.params.rx_len,
-                    param->pkt_data_length_cmpl.params.tx_len);
     break;
   }
 
@@ -641,20 +635,26 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
     {
       return;
     }
-    //   // Handle descriptor read request
-    //   if (param->read.handle == gl_profile_tab[PROFILE_A_APP_ID].descr_handle)
-    //   {
-    //     memcpy(rsp.attr_value.value, &descr_value, 2);
-    //     rsp.attr_value.len = 2;
-    //     esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id, ESP_GATT_OK, &rsp);
-    //     return;
-    //   }
 
     // logger::debugln("BLE characteristic read, conn_id %d, trans_id %" PRIu32 ", handle %d", param->read.conn_id, param->read.trans_id, param->read.handle);
     esp_gatt_rsp_t rsp;
-    rsp.handle = param->read.handle;
+    // rsp.handle = param->read.handle;
     rsp.attr_value.auth_req = 0;
     rsp.attr_value.offset = 0;
+    rsp.attr_value.handle = param->read.handle;
+
+    // 处理描述符
+    for (auto &handle : bleAttrHandle)
+    {
+      if (param->read.handle == handle)
+      {
+        memcpy(rsp.attr_value.value, &ble2902UUID, 2);
+        rsp.attr_value.len = 2;
+        esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id, ESP_GATT_OK, &rsp);
+        return;
+      }
+    }
+
     // 返回读取到的值
     if (param->read.handle == bleDeviceCharHandle)
     {
@@ -697,19 +697,21 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
   // 属性写入事件
   case ESP_GATTS_WRITE_EVT:
   {
-    // logger::debugln("BLE characteristic write, conn_id %d, trans_id %" PRIu32 ", handle %d", param->write.conn_id, param->write.trans_id, param->write.handle);
+    logger::debugln("BLE characteristic write, conn_id %d, trans_id %" PRIu32 ", handle %d, len %d", param->write.conn_id, param->write.trans_id, param->write.handle, param->write.len);
     if (!param->write.is_prep)
     {
       if (param->write.handle == bleConfigControlCharHandle)
       {
-        if (param->write.len == bleConfigControlChar.attr_len)
+        logger::debugln("BLE bleConfigControlCharHandle write, len %d", sizeof(ConfigServerControl));
+        if (param->write.len == sizeof(ConfigServerControl))
         {
           ble_config_control_handler(param->write.value);
         }
       }
       else if (param->write.handle == bleAudioControlCharHandle)
       {
-        if (param->write.len == bleAudioControlChar.attr_len)
+        logger::debugln("BLE AudioServerControl write, len %d", sizeof(AudioServerControl));
+        if (param->write.len == sizeof(AudioServerControl))
         {
           ble_audio_control_handler(param->write.value);
         }
@@ -794,7 +796,7 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
     break;
   }
 
-  // 添加描述事件
+  // 添加特征事件
   case ESP_GATTS_ADD_CHAR_EVT:
   {
     logger::debugln("BLE characteristic add, status %d, attr_handle %d, service_handle %d",
@@ -851,43 +853,46 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
     }
     break;
   }
-  // case ESP_GATTS_DELETE_EVT:
-  //   break;
-  // case ESP_GATTS_START_EVT:
-  //   ESP_LOGI(GATTS_TAG, "Service start, status %d, service_handle %d",
-  //            param->start.status, param->start.service_handle);
-  //   break;
-  // case ESP_GATTS_STOP_EVT:
-  //   break;
-  // case ESP_GATTS_CONNECT_EVT:
-  // {
-  //   esp_ble_conn_update_params_t conn_params = {0};
-  //   memcpy(conn_params.bda, param->connect.remote_bda, sizeof(esp_bd_addr_t));
-  //   /* For the IOS system, please reference the apple official documents about the ble connection parameters restrictions. */
-  //   conn_params.latency = 0;
-  //   conn_params.max_int = 0x20; // max_int = 0x20*1.25ms = 40ms
-  //   conn_params.min_int = 0x10; // min_int = 0x10*1.25ms = 20ms
-  //   conn_params.timeout = 400;  // timeout = 400*10ms = 4000ms
-  //   ESP_LOGI(GATTS_TAG, "Connected, conn_id %u, remote " ESP_BD_ADDR_STR "",
-  //            param->connect.conn_id, ESP_BD_ADDR_HEX(param->connect.remote_bda));
-  //   gl_profile_tab[PROFILE_A_APP_ID].conn_id = param->connect.conn_id;
-  //   // start sent the update connection parameters to the peer device.
-  //   esp_ble_gap_update_conn_params(&conn_params);
-  //   break;
-  // }
-  // case ESP_GATTS_DISCONNECT_EVT:
-  //   ESP_LOGI(GATTS_TAG, "Disconnected, remote " ESP_BD_ADDR_STR ", reason 0x%02x",
-  //            ESP_BD_ADDR_HEX(param->disconnect.remote_bda), param->disconnect.reason);
-  //   esp_ble_gap_start_advertising(&adv_params);
-  //   local_mtu = 23; // Reset MTU for a single connection
-  //   break;
-  // case ESP_GATTS_CONF_EVT:
-  //   ESP_LOGI(GATTS_TAG, "Confirm receive, status %d, attr_handle %d", param->conf.status, param->conf.handle);
-  //   if (param->conf.status != ESP_GATT_OK)
-  //   {
-  //     ESP_LOG_BUFFER_HEX(GATTS_TAG, param->conf.value, param->conf.len);
-  //   }
-  //   break;
+
+  // 添加描述事件
+  case ESP_GATTS_ADD_CHAR_DESCR_EVT:
+  {
+    if (param->add_char_descr.service_handle == bleBatteryServiceHandle || param->add_char_descr.service_handle == bleAudioServiceHandle)
+    {
+      bleAttrHandle.push_back(param->add_char_descr.attr_handle);
+    }
+    logger::debugln("BLE descriptor add, status %d, attr_handle %d, service_handle %d",
+                    param->add_char_descr.status, param->add_char_descr.attr_handle, param->add_char_descr.service_handle);
+    break;
+  }
+
+  // 蓝牙连接到设备事件
+  case ESP_GATTS_CONNECT_EVT:
+  {
+    ble_stop_advertising();
+    esp_ble_conn_update_params_t conn_params = {0};
+    memcpy(conn_params.bda, param->connect.remote_bda, sizeof(esp_bd_addr_t));
+    /* For the IOS system, please reference the apple official documents about the ble connection parameters restrictions. */
+    conn_params.latency = 0;
+    conn_params.max_int = 0x20; // max_int = 0x20*1.25ms = 40ms
+    conn_params.min_int = 0x00; // min_int = 0x10*1.25ms = 20ms
+    conn_params.timeout = 300;  // timeout = 400*10ms = 3000ms
+    // start sent the update connection parameters to the peer device.
+    esp_ble_gap_update_conn_params(&conn_params);
+    logger::debugln("BLE connected, conn_id %u, remote " ESP_BD_ADDR_STR "",
+                    param->connect.conn_id, ESP_BD_ADDR_HEX(param->connect.remote_bda));
+    break;
+  }
+
+  // 蓝牙断开连接事件
+  case ESP_GATTS_DISCONNECT_EVT:
+  {
+    ble_start_advertising();
+    logger::debugln("BLE disconnected, remote " ESP_BD_ADDR_STR ", reason 0x%02x",
+                    ESP_BD_ADDR_HEX(param->disconnect.remote_bda), param->disconnect.reason);
+    break;
+  }
+
   case ESP_GATTS_OPEN_EVT:
   case ESP_GATTS_CANCEL_OPEN_EVT:
   case ESP_GATTS_CLOSE_EVT:
@@ -897,7 +902,10 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
   case ESP_GATTS_ADD_INCL_SRVC_EVT:
   case ESP_GATTS_EXEC_WRITE_EVT:
   case ESP_GATTS_MTU_EVT:
-  case ESP_GATTS_ADD_CHAR_DESCR_EVT:
+  case ESP_GATTS_DELETE_EVT:
+  case ESP_GATTS_START_EVT:
+  case ESP_GATTS_STOP_EVT:
+  case ESP_GATTS_CONF_EVT:
   default:
     break;
   }
@@ -1032,20 +1040,31 @@ static void rf_handle(void *arg)
       {
       case AUDIO_CONTROL_MODE_WIFI_UDP:
       {
-        AudioData *data = audio::encoder::getData();
-        if (data->num > packet_last_num)
+        if (wifiIsOpen && socketIsOpen)
         {
-          packet_last_num = data->num;
-          socket_send((uint8_t *)&packet, sizeof(packet.num) + data->size);
+          AudioData *data = audio::encoder::getData();
+          if (data->num > packet_last_num)
+          {
+            packet_last_num = data->num;
+            packet.num = data->num;
+            memcpy(packet.data, data->data, data->size);
+            socket_send((uint8_t *)&packet, sizeof(packet.num) + data->size);
+          }
         }
         break;
       }
       case AUDIO_CONTROL_MODE_WIFI_TCP:
       {
+        if (wifiIsOpen && socketIsOpen)
+        {
+        }
         break;
       }
       case AUDIO_CONTROL_MODE_BLE:
       {
+        if (bleIsOpen)
+        {
+        }
         break;
       }
       }
@@ -1055,11 +1074,7 @@ static void rf_handle(void *arg)
 
 void rf::setup()
 {
-  led::blue();
-
   ble_open();
   // 启动发送线程
   xTaskCreatePinnedToCore(rf_handle, "rf_handle", TASK_RF_STACK, NULL, TASK_RF_PRIORITY, NULL, TASK_RF_CORE);
-
-  led::black();
 }
