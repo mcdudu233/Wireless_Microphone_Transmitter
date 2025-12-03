@@ -94,6 +94,13 @@ dependencies:
       registry_url: https://components.espressif.com/
       type: service
     version: 1.6.8
+  espressif/esp_audio_effects:
+    component_hash: 99f6ec0557974bd544d2591fe0b1a7167932ee99fe5a03f31971470aa40a2df5
+    dependencies: []
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.2.0
   espressif/esp_diag_data_store:
     component_hash: c1e5cf62f545d2b136db299f4df1b228b9840be5bc3410c9ad2d2a882b5c0d64
     dependencies:
@@ -229,7 +236,7 @@ dependencies:
       type: service
     version: 1.2.0
   espressif/esp_secure_cert_mgr:
-    component_hash: d5d773260a965bffa8146f6c8d8620dc60dc656a9108be337155f478703d984e
+    component_hash: e8ce8d5ac0ef4ef5df12fdb266190413c4170ad39b394435f0e3115a4fddc6a6
     dependencies:
     - name: idf
       require: private
@@ -237,7 +244,7 @@ dependencies:
     source:
       registry_url: https://components.espressif.com
       type: service
-    version: 2.7.1
+    version: 2.7.2
   espressif/jsmn:
     component_hash: d80350c41bbaa827c98a25b6072df00884e72f54885996fab4a4f0aebce6b6c3
     dependencies:
@@ -279,7 +286,7 @@ dependencies:
       type: service
     version: 1.0.20~2
   espressif/mdns:
-    component_hash: 5c148bc0996305bcf111c465bba021a8155d4247b0d9353c39da9b44a91ca381
+    component_hash: 29e47564b1a7ee778135e17fbbf2a2773f71c97ebabfe626c8eda7c958a7ad16
     dependencies:
     - name: idf
       require: private
@@ -287,7 +294,7 @@ dependencies:
     source:
       registry_url: https://components.espressif.com/
       type: service
-    version: 1.9.0
+    version: 1.9.1
   espressif/network_provisioning:
     component_hash: ef2e10182fd1861e68b821491916327c25416ca7ae70e5a6e43313dbc71fe993
     dependencies:
@@ -349,6 +356,7 @@ direct_dependencies:
 - espressif/esp-sr
 - espressif/esp-zboss-lib
 - espressif/esp-zigbee-lib
+- espressif/esp_audio_effects
 - espressif/esp_diag_data_store
 - espressif/esp_diagnostics
 - espressif/esp_insights
@@ -362,6 +370,6 @@ direct_dependencies:
 - espressif/tinyusb
 - idf
 - joltwallet/littlefs
-manifest_hash: ffc2176197ac2620b527fd7052a6a8fa90bf5a23060e584bd33e02e74a989836
+manifest_hash: efbc0334603d5a5b3e6c5a31acd923399b0f47c59130c49631ca8a2b39a8864a
 target: esp32s3
 version: 2.0.0

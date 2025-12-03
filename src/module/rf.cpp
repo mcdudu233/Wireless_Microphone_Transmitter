@@ -118,6 +118,7 @@ static esp_event_handler_instance_t wifiHandleInstance2;
 static const wifi_init_config_t wifiInitConfig = WIFI_INIT_CONFIG_DEFAULT();
 static wifi_config_t wifiConfig;
 
+static bool wifi_close();
 static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
 {
   if (event_base == WIFI_EVENT)
@@ -143,8 +144,16 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
       }
       else
       {
-        xEventGroupSetBits(wifiEventGroup, WIFI_FAIL_BIT);
-        logger::warnln("WiFi connect to the AP fail!");
+        if (wifiIsOpen)
+        {
+          // 意外断开连接
+          wifi_close();
+        }
+        else
+        {
+          xEventGroupSetBits(wifiEventGroup, WIFI_FAIL_BIT);
+          logger::warnln("WiFi connect to the AP fail!");
+        }
       }
     }
   }
@@ -170,9 +179,10 @@ static bool wifi_close()
 {
   if (wifiIsOpen)
   {
+    socket_close();
     ESP_ERROR_CHECK(esp_wifi_stop());
-    ESP_ERROR_CHECK(esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifiHandleInstance1));
-    ESP_ERROR_CHECK(esp_event_handler_instance_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifiHandleInstance2));
+    ESP_ERROR_CHECK(esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, wifiHandleInstance1));
+    ESP_ERROR_CHECK(esp_event_handler_instance_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, wifiHandleInstance2));
     ESP_ERROR_CHECK(esp_wifi_deinit());
     esp_netif_destroy(wifiNetIF);
     vEventGroupDelete(wifiEventGroup);
@@ -226,6 +236,7 @@ static bool wifi_open(const char *ssid, const char *password)
    * happened. */
   if (bits & WIFI_CONNECTED_BIT)
   {
+    socket_open(configBasic.mode == AUDIO_CONTROL_MODE_WIFI_TCP, wifiGatewayIP, configBasic.port);
     return true;
   }
   else
@@ -410,8 +421,8 @@ static esp_ble_adv_data_t bleAdvertisingScanData = {
     .flag = (ESP_BLE_ADV_FLAG_GEN_DISC | ESP_BLE_ADV_FLAG_BREDR_NOT_SPT),
 };
 static esp_ble_adv_params_t bleAdvertisingParams = {
-    .adv_int_min = 0x20,
-    .adv_int_max = 0x40,
+    .adv_int_min = 0x00A0,
+    .adv_int_max = 0x00B0,
     .adv_type = ADV_TYPE_IND,
     .own_addr_type = BLE_ADDR_TYPE_PUBLIC,
     // .peer_addr            =
@@ -448,18 +459,11 @@ static void ble_config_control_handler(uint8_t *data)
     configBasic.startWiFi = src->startWiFi;
     if (configBasic.startWiFi)
     {
-      if (wifi_open(configBasic.name, configBasic.password))
-      {
-        socket_open(configBasic.mode == AUDIO_CONTROL_MODE_WIFI_TCP, wifiGatewayIP, configBasic.port);
-      }
-      else
-      {
-        wifi_close();
-      }
+      wifi_open(configBasic.name, configBasic.password);
+      ble_close();
     }
     else
     {
-      socket_close();
       wifi_close();
     }
   }
@@ -489,33 +493,45 @@ static void ble_audio_control_handler(uint8_t *data)
   if (configAudio.channel != src->channel)
   {
     configAudio.channel = src->channel;
+    audio::encoder::setChannel(configAudio.channel);
   }
   if (configAudio.rate != src->rate)
   {
     configAudio.rate = src->rate;
+    audio::encoder::setRate(configAudio.rate);
   }
   if (configAudio.bit != src->bit)
   {
     configAudio.bit = src->bit;
+    audio::encoder::setBit(configAudio.bit);
   }
   if (configAudio.autoVolumn != src->autoVolumn)
   {
     configAudio.autoVolumn = src->autoVolumn;
+    audio::encoder::setGain(configAudio.volumn);
   }
   if (configAudio.peekVolumn != src->peekVolumn)
   {
     configAudio.peekVolumn = src->peekVolumn;
+    audio::encoder::setPeek(configAudio.peekVolumn);
   }
   if (configAudio.volumn != src->volumn)
   {
     configAudio.volumn = src->volumn;
+    audio::encoder::setAuto(configAudio.autoVolumn);
   }
   if (configAudio.start != src->start)
   {
     configAudio.start = src->start;
     if (configAudio.start)
     {
-      audio::encoder::on(configAudio.rate, configAudio.bit);
+      audio::encoder::setRate(configAudio.rate);
+      audio::encoder::setChannel(configAudio.channel);
+      audio::encoder::setBit(configAudio.bit);
+      audio::encoder::setGain(configAudio.volumn);
+      audio::encoder::setPeek(configAudio.peekVolumn);
+      audio::encoder::setAuto(configAudio.autoVolumn);
+      audio::encoder::on();
     }
     else
     {
@@ -915,38 +931,89 @@ static bool ble_close()
 {
   if (bleIsOpen)
   {
-    // // 停止扫描
-    // ble_stop_advertising();
 
-    // // 反注册GATTC应用
-    // esp_ble_gattc_app_unregister(bleGattcInterface);
+    // 停止广告
+    ble_stop_advertising();
 
-    // // 禁用Bluedroid
-    // esp_err_t ret;
-    // ret = esp_bluedroid_disable();
-    // if (ret != ESP_OK)
-    // {
-    //   logger::warnln("BLE bluedroid disable failed: %s", esp_err_to_name(ret));
-    // }
-    // ret = esp_bluedroid_deinit();
-    // if (ret != ESP_OK)
-    // {
-    //   logger::warnln("BLE bluedroid deinit failed: %s", esp_err_to_name(ret));
-    // }
+    // 断开所有连接
+    esp_ble_gatts_close(bleGattcInterface, 0);
 
-    // // 禁用蓝牙控制器
-    // ret = esp_bt_controller_disable();
-    // if (ret != ESP_OK)
-    // {
-    //   logger::warnln("BLE controller disable failed: %s", esp_err_to_name(ret));
-    // }
-    // ret = esp_bt_controller_deinit();
-    // if (ret != ESP_OK)
-    // {
-    //   logger::warnln("BLE controller deinit failed: %s", esp_err_to_name(ret));
-    // }
+    // 注销GATTS应用
+    esp_err_t ret = esp_ble_gatts_app_unregister(bleGattcId);
+    if (ret != ESP_OK)
+    {
+      logger::warnln("BLE gatts app unregister failed: %s", esp_err_to_name(ret));
+    }
 
-    // bleIsOpen = false;
+    // 注销GATTS回调函数
+    ret = esp_ble_gatts_register_callback(NULL);
+    if (ret != ESP_OK)
+    {
+      logger::warnln("BLE gatts unregister callback failed: %s", esp_err_to_name(ret));
+    }
+
+    // 注销GAP回调函数
+    ret = esp_ble_gap_register_callback(NULL);
+    if (ret != ESP_OK)
+    {
+      logger::warnln("BLE gap unregister callback failed: %s", esp_err_to_name(ret));
+    }
+
+    // 禁用Bluedroid
+    ret = esp_bluedroid_disable();
+    if (ret != ESP_OK)
+    {
+      logger::warnln("BLE bluedroid disable failed: %s", esp_err_to_name(ret));
+    }
+
+    ret = esp_bluedroid_deinit();
+    if (ret != ESP_OK)
+    {
+      logger::warnln("BLE bluedroid deinit failed: %s", esp_err_to_name(ret));
+    }
+
+    // 禁用蓝牙控制器
+    ret = esp_bt_controller_disable();
+    if (ret != ESP_OK)
+    {
+      logger::warnln("BLE controller disable failed: %s", esp_err_to_name(ret));
+    }
+
+    ret = esp_bt_controller_deinit();
+    if (ret != ESP_OK)
+    {
+      logger::warnln("BLE controller deinit failed: %s", esp_err_to_name(ret));
+    }
+
+    // 释放蓝牙控制器内存
+    ret = esp_bt_controller_mem_release(ESP_BT_MODE_BLE);
+    if (ret != ESP_OK)
+    {
+      logger::warnln("BLE controller memory release failed: %s", esp_err_to_name(ret));
+    }
+
+    // 清理全局状态
+    bleIsAdvertising = false;
+    bleGattcInterface = ESP_GATT_IF_NONE;
+
+    // 清空句柄向量
+    bleAttrHandle.clear();
+
+    // 重置服务句柄
+    bleInfoServiceHandle = 0;
+    bleBatteryServiceHandle = 0;
+    bleAudioServiceHandle = 0;
+
+    // 重置特征句柄
+    bleDeviceCharHandle = 0;
+    bleModelCharHandle = 0;
+    bleManufacturerCharHandle = 0;
+    bleBatteryCharHandle = 0;
+    bleDataCharHandle = 0;
+    bleConfigControlCharHandle = 0;
+    bleAudioControlCharHandle = 0;
+
+    bleIsOpen = false;
   }
   logger::debugln("BLE is close.");
   return true;

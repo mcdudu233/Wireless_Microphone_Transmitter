@@ -27,9 +27,20 @@ struct AudioData
 namespace audio::encoder
 {
   void setup();
-  void on(uint32_t rate = 192 * 1000, uint32_t bit = 32);
+  void on();
   void off();
   bool isOn();
+
+  // rate -> gain -> channel -> bit
+  void setRate(uint32_t rate);
+  void setBit(uint32_t bit);
+  void setChannel(uint8_t channel);
+  // 设置自动增益
+  void setAuto(bool on);
+  // 设置自动降低增益
+  void setPeek(bool on);
+  // 设置增益(dB)
+  void setGain(int8_t db);
 
   // 默认采用 Linear phase filters ，可以设置为 Low latency filters
   void setLowLatencyFilter(bool on);
