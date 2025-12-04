@@ -3,6 +3,7 @@
 #include "module/rf.h"
 #include "module/led.h"
 #include "module/audio/encoder.h"
+#include "module/audio/buffer.h"
 
 #include "string"
 #include "vector"
@@ -12,40 +13,23 @@ static AudioServerControl configAudio;
 
 /*****************************
           传输层协议
-         TCP 和 UDP
 *****************************/
 #include "lwip/err.h"
-#include "lwip/sockets.h"
-#include "lwip/sys.h"
-#include "lwip/netdb.h"
-// TCP和UDP不能同时启用
+#include "lwip/api.h"
 static bool socketIsOpen = false;
-static bool socketIsTCP;
-static int socketNumber;
-static struct sockaddr_in socketDestination;
+static netconn *socketInstance;
+static ip_addr_t socketDestination;
 
-static bool socket_send(const void *data, size_t size)
+static bool socket_send(netbuf *buf)
 {
-  if (socketIsTCP)
+  err_t err = netconn_sendto(socketInstance, buf, &socketDestination, WIFI_NO_PORT);
+  if (err != ERR_OK)
   {
-    int err = send(socketNumber, data, size, MSG_DONTWAIT);
-    if (err < 0)
-    {
-      logger::warnln("Socket error occurred during sending: errno %d", errno);
-      return false;
-    }
-    return true;
+    logger::warnln("Socket send failed: %d", err);
   }
-  else
-  {
-    int err = sendto(socketNumber, data, size, MSG_DONTWAIT, (struct sockaddr *)&socketDestination, sizeof(socketDestination));
-    if (err < 0)
-    {
-      logger::warnln("Socket error occurred during sending: errno %d", errno);
-      return false;
-    }
-    return true;
-  }
+  // 释放
+  netbuf_delete(buf);
+  return true;
 }
 
 static bool socket_close()
@@ -53,50 +37,49 @@ static bool socket_close()
   if (socketIsOpen)
   {
     socketIsOpen = false;
-    shutdown(socketNumber, 0);
-    close(socketNumber);
+    if (socketInstance != NULL)
+    {
+      netconn_delete(socketInstance);
+      socketInstance = NULL;
+    }
   }
   logger::debugln("Socket is shutdown.");
   return true;
 }
 
-static bool socket_open(bool isTCP, uint32_t hostIP, uint16_t hostPort)
+static bool socket_open(uint32_t localIP, uint32_t destIP)
 {
   if (socketIsOpen)
   {
     socket_close();
   }
 
-  socketIsTCP = isTCP;
-  if (isTCP)
+  // 创建
+  socketInstance = netconn_new_with_proto_and_callback(NETCONN_RAW, WIFI_IP_PROTOCOL, NULL);
+  if (socketInstance == NULL)
   {
-    socketNumber = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
+    logger::warnln("Socket unable to create:!");
+    return false;
   }
-  else
-  {
-    socketNumber = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
-  }
-  socketDestination.sin_addr.s_addr = hostIP;
-  socketDestination.sin_family = AF_INET;
-  socketDestination.sin_port = htons(hostPort);
-  fcntl(socketNumber, F_SETFL, O_NONBLOCK); // 不阻塞
 
-  // 连接 TCP
-  if (isTCP)
+  // 绑定到本地地址
+  ip_addr_t local_ip = {.addr = localIP};
+  err_t ret = netconn_bind(socketInstance, &local_ip, WIFI_NO_PORT);
+  if (ret != ERR_OK)
   {
-    int err = connect(socketNumber, (struct sockaddr *)&socketDestination, sizeof(socketDestination));
-    if (err != 0)
-    {
-      close(socketNumber);
-      logger::warnln("Socket unable to connect: errno %d", errno);
-      return false;
-    }
+    logger::warnln("Socket netconn bind failed: %d", ret);
+    netconn_delete(socketInstance);
+    socketInstance = NULL;
+    return false;
   }
+  // 绑定远程地址
+  socketDestination.addr = destIP;
+
+  // 设置非阻塞模式
+  // netconn_set_nonblocking(socketInstance, true);
 
   socketIsOpen = true;
-  logger::debugln("Socket is started for IP %d.%d.%d.%d, port %d.",
-                  ((uint8_t *)&hostIP)[0], ((uint8_t *)&hostIP)[1], ((uint8_t *)&hostIP)[2], ((uint8_t *)&hostIP)[3],
-                  hostPort);
+  logger::debugln("Socket is started.");
   return true;
 }
 /****************************/
@@ -236,7 +219,7 @@ static bool wifi_open(const char *ssid, const char *password)
    * happened. */
   if (bits & WIFI_CONNECTED_BIT)
   {
-    socket_open(configBasic.mode == AUDIO_CONTROL_MODE_WIFI_TCP, wifiGatewayIP, configBasic.port);
+    socket_open(wifiIP, wifiGatewayIP);
     return true;
   }
   else
@@ -450,10 +433,6 @@ static void ble_config_control_handler(uint8_t *data)
   {
     strcpy(configBasic.password, src->password);
   }
-  if (configBasic.port != src->port)
-  {
-    configBasic.port = src->port;
-  }
   if (configBasic.startWiFi != src->startWiFi)
   {
     configBasic.startWiFi = src->startWiFi;
@@ -528,10 +507,10 @@ static void ble_audio_control_handler(uint8_t *data)
       audio::encoder::setRate(configAudio.rate);
       audio::encoder::setChannel(configAudio.channel);
       audio::encoder::setBit(configAudio.bit);
+      audio::encoder::on();
       audio::encoder::setGain(configAudio.volumn);
       audio::encoder::setPeek(configAudio.peekVolumn);
       audio::encoder::setAuto(configAudio.autoVolumn);
-      audio::encoder::on();
     }
     else
     {
@@ -1091,7 +1070,7 @@ static bool ble_open()
 }
 /****************************/
 
-static AudioPacketUDP packet;
+// static AudioPacketUDP packet;
 static uint32_t packet_last_num;
 static void rf_handle(void *arg)
 {
@@ -1101,29 +1080,21 @@ static void rf_handle(void *arg)
   {
     xTaskDelayUntil(&xLastWakeTime, xFrequency);
 
-    if (configBasic.start)
+    if (configBasic.start || configBasic.startWiFi)
     {
       switch (configBasic.mode)
       {
-      case AUDIO_CONTROL_MODE_WIFI_UDP:
+      case AUDIO_CONTROL_MODE_WIFI:
       {
         if (wifiIsOpen && socketIsOpen)
         {
-          AudioData *data = audio::encoder::getData();
-          if (data->num > packet_last_num)
+          netbuf **buffer;
+          uint8_t size = audio::buffer::getWiFiPacketFront(&buffer);
+          logger::debugln("size %d", size);
+          for (int i = 0; i < size; i++)
           {
-            packet_last_num = data->num;
-            packet.num = data->num;
-            memcpy(packet.data, data->data, data->size);
-            socket_send((uint8_t *)&packet, sizeof(packet.num) + data->size);
+            socket_send(buffer[i]);
           }
-        }
-        break;
-      }
-      case AUDIO_CONTROL_MODE_WIFI_TCP:
-      {
-        if (wifiIsOpen && socketIsOpen)
-        {
         }
         break;
       }

@@ -17,12 +17,13 @@
 #define WIFI_RETRY 3
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT BIT1
+#define WIFI_IP_PROTOCOL 0xE9
+#define WIFI_NO_PORT 0
 
 enum ConfigControlMode
 {
   AUDIO_CONTROL_MODE_BLE = 0,
-  AUDIO_CONTROL_MODE_WIFI_UDP = 1,
-  AUDIO_CONTROL_MODE_WIFI_TCP = 2,
+  AUDIO_CONTROL_MODE_WIFI = 1,
 };
 
 struct ConfigClientControl
@@ -44,7 +45,6 @@ struct ConfigServerControl
   ConfigControlMode mode = AUDIO_CONTROL_MODE_BLE;
   char name[32] = "";
   char password[32] = "";
-  uint16_t port = 3333;
 };
 
 struct AudioServerControl
@@ -58,25 +58,23 @@ struct AudioServerControl
   uint8_t volumn = 0;
 };
 
-// TCP音频包
-struct AudioPacketTCP
+// WIFI音频包
+#define WIFI_MAX_DATA_SIZE 1430
+struct AudioPacketWIFI
 {
-  uint32_t num;
-  uint8_t data[1536];
-};
-
-// UDP音频包
-struct AudioPacketUDP
-{
-  uint32_t num;
-  uint8_t data[1536];
+  uint16_t crc;  // 校验位
+  uint16_t size; // 前两位用于选择信息类型
+  uint32_t number;
+  uint8_t part;
+  uint8_t data[WIFI_MAX_DATA_SIZE];
 };
 
 // BLE音频包
+#define BLE_MAX_DATA_SIZE 384
 struct AudioPacketBLE
 {
   uint32_t num;
-  uint8_t data[384];
+  uint8_t data[BLE_MAX_DATA_SIZE];
 };
 
 namespace rf

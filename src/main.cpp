@@ -3,6 +3,7 @@
 #include "module/led.h"
 #include "module/voltage.h"
 #include "module/audio/power.h"
+#include "module/audio/buffer.h"
 #include "module/audio/encoder.h"
 #include "module/usb/usb.h"
 #include "module/rf.h"
@@ -18,6 +19,7 @@ extern "C" void app_main()
   sys::setup();
   voltage::setup();
   audio::power::setup();
+  audio::buffer::setup();
   audio::encoder::setup();
   // usb::setup();
   rf::setup();

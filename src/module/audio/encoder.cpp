@@ -2,6 +2,7 @@
 #include "logger.h"
 #include "module/audio/power.h"
 #include "module/audio/encoder.h"
+#include "module/audio/buffer.h"
 
 #include "cctype"
 #include "driver/i2s_std.h"
@@ -13,8 +14,8 @@
 static const i2s_chan_config_t i2s_chan_cfg = {
     .id = I2S_NUM_AUTO,
     .role = I2S_ROLE_MASTER,
-    .dma_desc_num = 4,    // 多少个DMA
-    .dma_frame_num = 384, // 每个DMA大小
+    .dma_desc_num = AUDIO_ENCODER_POLLING_CYCLE, // 多少个DMA
+    .dma_frame_num = 384,                        // 每个DMA大小 可以保存2ms数据
     .auto_clear_after_cb = false,
     .auto_clear_before_cb = false,
     .allow_pd = false,
@@ -61,14 +62,10 @@ static esp_ae_ch_cvt_handle_t ch_cvt_handle = NULL;
 
 static bool powerOn = false;
 
-// 循环缓冲区
-static AudioData *data;
-static uint8_t data_pointer;
-static uint32_t data_number;
-
 // 实时处理音频数据
-// static int64_t read_len = 0;
-// static unsigned long last_time = millis();
+static int64_t read_len = 0;
+static int64_t read_loss = 0;
+static unsigned long last_time = millis();
 static void audioHandle(void *arg)
 {
   TickType_t xLastWakeTime = xTaskGetTickCount();
@@ -80,46 +77,20 @@ static void audioHandle(void *arg)
     // 启动了芯片才读取数据
     if (powerOn)
     {
-      // 录制 WAV 测试
-      // uint32_t sample_rate = 48000;
-      // uint16_t sample_width = 32;
-      // uint16_t num_channels = 2;
-      // size_t rec_size = 15 * ((sample_rate * (sample_width / 8)) * num_channels);
-      // const pcm_wav_header_t wav_header = PCM_WAV_HEADER_DEFAULT(rec_size, sample_width, sample_rate, num_channels);
-      // logger::debugln("Record WAV: rate:%lu, bits:%u, channels:%u, size:%lu", sample_rate, sample_width, num_channels, rec_size);
-
-      // uint8_t *wav_buf = (uint8_t *)heap_caps_malloc(rec_size + PCM_WAV_HEADER_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_32BIT);
-      // if (wav_buf == NULL)
-      // {
-      //   logger::debugln("Failed to allocate WAV buffer with size %u", rec_size + PCM_WAV_HEADER_SIZE);
-      //   return;
-      // }
-      // memcpy(wav_buf, &wav_header, PCM_WAV_HEADER_SIZE);
-      // size_t wav_size = I2S.readBytes((char *)(wav_buf + PCM_WAV_HEADER_SIZE), rec_size);
-      // if (wav_size < rec_size)
-      // {
-      //   logger::debugln("Recorded %u bytes from %u", wav_size, rec_size);
-      // }
-      // else
-      // {
-      //   USBCDCSerial.write(wav_buf, rec_size + PCM_WAV_HEADER_SIZE);
-      // }
-
-      // // if (millis() - last_time >= 1000)
-      // // {
-      // //   last_time = millis();
-      // //   logger::debugln("%d Kbps", read_len * 8);
-      // //   read_len = 0;
-      // // }
-
-      // size_t size = i2s_rate * AUDIO_ENCODER_BIT * AUDIO_ENCODER_CHANNEL / 8 * AUDIO_ENCODER_POLLING_CYCLE / 1000;
-      // AudioData &buffer = data[data_pointer];
-      // data_pointer = (data_pointer + 1) % AUDIO_ENCODER_MAX_BUFFER_SIZE;
-      // buffer.num = data_number++ % UINT32_MAX;
-      // buffer.size = size;
       size_t size = i2s_rate / 1000 * AUDIO_ENCODER_POLLING_CYCLE * AUDIO_ENCODER_BIT / 8 * AUDIO_ENCODER_CHANNEL;
-      if (i2s_channel_read(i2s_rx_handle, i2s_data1, size, NULL, AUDIO_ENCODER_POLLING_CYCLE * 2) == ESP_OK)
+      esp_err_t ret = i2s_channel_read(i2s_rx_handle, i2s_data1, size, NULL, AUDIO_ENCODER_POLLING_CYCLE * 2);
+      if (ret == ESP_OK)
       {
+        read_len++;
+        if (millis() - last_time >= 1000)
+        {
+          last_time = millis();
+          logger::debugln("%d packets/s", read_len);
+          logger::debugln("lost%d packets/s", read_loss);
+          read_len = 0;
+          read_loss = 0;
+        }
+
         size_t sample_num = size * 8 / AUDIO_ENCODER_BIT / AUDIO_ENCODER_CHANNEL;
         bool in_data1 = true;
         // 增益
@@ -165,28 +136,30 @@ static void audioHandle(void *arg)
             logger::warnln("Audio Encoder's bit process failed!");
           }
         }
-
-        AudioData &buffer = data[data_pointer];
-        data_pointer = (data_pointer + 1) % AUDIO_ENCODER_MAX_BUFFER_SIZE;
-        buffer.num = data_number++ % UINT32_MAX;
-        buffer.size = size;
+        // 送到缓冲里面
+        uint8_t *data = audio::buffer::getWritePointer(size);
         if (in_data1)
         {
-          memcpy(buffer.data, i2s_data1, size);
+          memcpy(data, i2s_data1, size);
         }
         else
         {
-          memcpy(buffer.data, i2s_data2, size);
+          memcpy(data, i2s_data2, size);
         }
-        int8_t gain;
-        esp_ae_alc_get_gain(alc_handle, 0, &gain);
-        printf("gain is %d", gain);
+        // int8_t gain;
+        // esp_ae_alc_get_gain(alc_handle, 0, &gain);
+        // printf("gain is %d", gain);
+      }
+      else if (ret == ESP_ERR_TIMEOUT)
+      {
+        read_loss++;
+        logger::warnln("Audio Encoder's I2S read fail! Time out!");
       }
       else
       {
-        logger::warnln("Audio Encoder's I2S read fail! Size not same!");
+        read_loss++;
+        logger::warnln("Audio Encoder's I2S read fail! ");
       }
-      // read_len++;
     }
   }
 }
@@ -194,7 +167,6 @@ static void audioHandle(void *arg)
 void audio::encoder::setup()
 {
   logger::debugln("Audio Encoder is starting...");
-  data = (AudioData *)heap_caps_malloc(sizeof(AudioData) * AUDIO_ENCODER_MAX_BUFFER_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_32BIT);
   i2s_data1 = (uint32_t *)heap_caps_malloc(AUDIO_ENCODER_RATE / 1000 * AUDIO_ENCODER_POLLING_CYCLE * AUDIO_ENCODER_BIT / 8 * AUDIO_ENCODER_CHANNEL, MALLOC_CAP_INTERNAL | MALLOC_CAP_32BIT);
   i2s_data2 = (uint32_t *)heap_caps_malloc(AUDIO_ENCODER_RATE / 1000 * AUDIO_ENCODER_POLLING_CYCLE * AUDIO_ENCODER_BIT / 8 * AUDIO_ENCODER_CHANNEL, MALLOC_CAP_INTERNAL | MALLOC_CAP_32BIT);
   pinMode(AUDIO_ENCODER_MD0, OUTPUT);
@@ -211,24 +183,12 @@ void audio::encoder::on()
   {
     off();
   }
-  else
-  {
-    powerOn = true;
-  }
 
   if (!audio::power::isOn())
   {
     audio::power::on();
   }
 
-  // 刷新缓存
-  for (int i = 0; i < AUDIO_ENCODER_MAX_BUFFER_SIZE; i++)
-  {
-    data[i].num = 0;
-    data[i].size = 0;
-  }
-  data_pointer = 0;
-  data_number = 0;
   // 启动 i2s
   i2s_new_channel(&i2s_chan_cfg, NULL, &i2s_rx_handle);
   i2s_std_config_t std_cfg = {
@@ -244,6 +204,7 @@ void audio::encoder::on()
       .channel = I2S_SLOT_MODE_STEREO,
       .bits_per_sample = I2S_DATA_BIT_WIDTH_32BIT};
   esp_ae_alc_open(&alc_cfg, &alc_handle);
+  powerOn = true;
   logger::debugln("Audio Encoder is on.");
 }
 
@@ -385,41 +346,5 @@ void audio::encoder::setDRE(bool on)
   else
   {
     digitalWrite(AUDIO_ENCODER_MD1, LOW);
-  }
-}
-
-uint8_t audio::encoder::getNumber()
-{
-  return data_pointer;
-}
-
-AudioData *audio::encoder::getData()
-{
-  return getDataFromIndex(0);
-}
-
-AudioData *audio::encoder::getDataFromIndex(uint8_t index)
-{
-  return &data[(data_pointer + AUDIO_ENCODER_MAX_BUFFER_SIZE - 1 - index) % AUDIO_ENCODER_MAX_BUFFER_SIZE];
-}
-
-AudioData *audio::encoder::getDataFromNumber(uint32_t number)
-{
-  int32_t now = getData()->num;
-  if (number > now)
-  {
-    return nullptr;
-  }
-  else if (number == now)
-  {
-    return getData();
-  }
-  else
-  {
-    if ((now - number) >= AUDIO_ENCODER_MAX_BUFFER_SIZE)
-    {
-      return nullptr;
-    }
-    return getDataFromIndex(now - number);
   }
 }
