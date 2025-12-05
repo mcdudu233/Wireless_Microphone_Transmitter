@@ -1080,7 +1080,7 @@ static void rf_handle(void *arg)
   {
     xTaskDelayUntil(&xLastWakeTime, xFrequency);
 
-    if (configBasic.start || configBasic.startWiFi)
+    if (configBasic.start)
     {
       switch (configBasic.mode)
       {
@@ -1088,13 +1088,13 @@ static void rf_handle(void *arg)
       {
         if (wifiIsOpen && socketIsOpen)
         {
-          netbuf **buffer;
-          uint8_t size = audio::buffer::getWiFiPacketFront(&buffer);
-          logger::debugln("size %d", size);
-          for (int i = 0; i < size; i++)
+          netbuf **buf = NULL;
+          uint8_t size = audio::buffer::getWiFiPacketFront(&buf);
+          for (int part = 0; part < size; part++)
           {
-            socket_send(buffer[i]);
+            socket_send(buf[part]);
           }
+          free(buf);
         }
         break;
       }

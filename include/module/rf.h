@@ -59,22 +59,31 @@ struct AudioServerControl
 };
 
 // WIFI音频包
-#define WIFI_MAX_DATA_SIZE 1430
-struct AudioPacketWIFI
+#define WIFI_PACKET_HEAD_SIZE (sizeof(AudioPacketWIFI) - WIFI_PACKET_DATA_MAX_SIZE)
+#define WIFI_PACKET_DATA_MAX_SIZE 1420
+enum AudioPacketWIFIType
 {
-  uint16_t crc;  // 校验位
-  uint16_t size; // 前两位用于选择信息类型
+  AUDIO_PACKET_WIFI_TYPE_DATA = 0,
+  AUDIO_PACKET_WIFI_TYPE_CONTROL = 1,
+};
+struct __attribute__((packed)) AudioPacketWIFI
+{
+  uint8_t type; // 包类型
+  uint16_t size;
   uint32_t number;
   uint8_t part;
-  uint8_t data[WIFI_MAX_DATA_SIZE];
+  uint8_t data[WIFI_PACKET_DATA_MAX_SIZE];
 };
 
 // BLE音频包
-#define BLE_MAX_DATA_SIZE 384
-struct AudioPacketBLE
+#define BLE_PACKET_HEAD_SIZE (sizeof(AudioPacketBLE) - BLE_PACKET_DATA_MAX_SIZE)
+#define BLE_PACKET_DATA_MAX_SIZE 384
+struct __attribute__((packed)) AudioPacketBLE
 {
-  uint32_t num;
-  uint8_t data[BLE_MAX_DATA_SIZE];
+  uint16_t size;
+  uint32_t number;
+  uint8_t part;
+  uint8_t data[BLE_PACKET_DATA_MAX_SIZE];
 };
 
 namespace rf

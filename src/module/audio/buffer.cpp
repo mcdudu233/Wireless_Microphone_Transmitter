@@ -9,7 +9,7 @@ static uint32_t data_number;
 uint8_t *audio::buffer::getWritePointer(uint32_t packet_size)
 {
   AudioData *buffer = &data[data_pointer];
-  data_pointer = (data_pointer + 1) % AUDIO_ENCODER_MAX_BUFFER_SIZE;
+  data_pointer = (data_pointer + 1) % AUDIO_BUFFER_MAX_BUFFER_SIZE;
   buffer->num = data_number++ % UINT32_MAX;
   buffer->size = packet_size;
   return buffer->data;
@@ -18,7 +18,7 @@ uint8_t *audio::buffer::getWritePointer(uint32_t packet_size)
 // 获取过去的第N个数据
 static AudioData *getAudioData(uint8_t last)
 {
-  return &data[(data_pointer + AUDIO_ENCODER_MAX_BUFFER_SIZE - 1 - last) % AUDIO_ENCODER_MAX_BUFFER_SIZE];
+  return &data[(data_pointer + AUDIO_BUFFER_MAX_BUFFER_SIZE - 1 - last) % AUDIO_BUFFER_MAX_BUFFER_SIZE];
 }
 
 AudioData *audio::buffer::getAudioDataFront()
@@ -39,7 +39,7 @@ AudioData *audio::buffer::getAudioDataFromNumber(uint32_t number)
   }
   else
   {
-    if ((now - number) >= AUDIO_ENCODER_MAX_BUFFER_SIZE)
+    if ((now - number) >= AUDIO_BUFFER_MAX_BUFFER_SIZE)
     {
       return nullptr;
     }
@@ -58,49 +58,75 @@ uint32_t audio::buffer::getNumber()
 }
 
 static uint32_t wifiLastNumber = 0;
-uint8_t audio::buffer::getWiFiPacketFront(netbuf ***buffer)
+uint8_t audio::buffer::getWiFiPacketFront(netbuf ***buffers)
 {
   AudioData *audio = getAudioDataFront();
   if (audio->num > wifiLastNumber)
   {
-    if (audio->size > WIFI_MAX_DATA_SIZE)
+    wifiLastNumber = audio->num; // 已发送
+
+    uint8_t part_max = audio->size / WIFI_PACKET_DATA_MAX_SIZE + 1;
+    *buffers = (netbuf **)malloc(sizeof(netbuf *) * part_max);
+    if (*buffers == NULL)
     {
-      uint8_t part_max = audio->size / WIFI_MAX_DATA_SIZE + 1;
-      uint16_t part_last_size = audio->size - WIFI_MAX_DATA_SIZE * (part_max - 1);
-      // 分包
-      *buffer = (netbuf **)malloc(sizeof(netbuf *) * part_max);
-      for (int i = 0; i < part_max - 1; i++)
+      logger::warnln("Socket (netbuf **) malloc failed!");
+      return 0;
+    }
+    // 创建每个包
+    for (uint8_t part = 0; part < part_max; part++)
+    {
+      // 计算包大小
+      uint16_t part_size;
+      if (part != part_max - 1)
       {
-        (*buffer)[i] = netbuf_new();
-        AudioPacketWIFI *data = (AudioPacketWIFI *)netbuf_alloc((*buffer)[i], sizeof(AudioPacketWIFI));
-        data->crc = 0;
-        data->number = audio->num;
-        data->part = 0;
-        data->size = audio->size;
-        memcpy(data->data, audio->data, WIFI_MAX_DATA_SIZE);
+        part_size = WIFI_PACKET_DATA_MAX_SIZE;
       }
-      // 封装最后一个包
-      (*buffer)[part_max - 1] = netbuf_new();
-      AudioPacketWIFI *data = (AudioPacketWIFI *)netbuf_alloc((*buffer)[part_max - 1], sizeof(AudioPacketWIFI) - WIFI_MAX_DATA_SIZE + part_last_size);
-      data->crc = 0;
+      else
+      {
+        // 最后一个包不一定是满的
+        part_size = audio->size - WIFI_PACKET_DATA_MAX_SIZE * (part_max - 1);
+      }
+
+      // 初始化结构体
+      netbuf *buffer = NULL;
+      buffer = netbuf_new();
+      if (buffer == NULL)
+      {
+        // 释放之前已分配的资源
+        for (uint8_t i = 0; i < part; i++)
+        {
+          netbuf_delete((*buffers)[i]);
+        }
+        free(*buffers);
+        *buffers = NULL;
+        logger::warnln("Socket netbuf_new() malloc failed!");
+        return 0;
+      }
+      (*buffers)[part] = buffer;
+
+      // 复制数据
+      AudioPacketWIFI *data = (AudioPacketWIFI *)netbuf_alloc(buffer, WIFI_PACKET_HEAD_SIZE + part_size);
+      if (data == NULL)
+      {
+        // 释放当前buffer
+        netbuf_delete((*buffers)[part]);
+        // 释放之前已分配的buffers
+        for (uint8_t i = 0; i < part; i++)
+        {
+          netbuf_delete((*buffers)[i]);
+        }
+        free(*buffers);
+        *buffers = NULL;
+        logger::warnln("Socket netbuf_alloc() malloc failed!");
+        return 0;
+      }
+      data->type = AUDIO_PACKET_WIFI_TYPE_DATA;
+      data->size = part_size;
       data->number = audio->num;
-      data->part = 0;
-      data->size = audio->size;
-      memcpy(data->data, audio->data, part_last_size);
-      return part_max;
+      data->part = part;
+      memcpy(data->data, audio->data + WIFI_PACKET_DATA_MAX_SIZE * part, part_size);
     }
-    else
-    {
-      *buffer = (netbuf **)malloc(sizeof(netbuf *));
-      (*buffer)[0] = netbuf_new();
-      AudioPacketWIFI *data = (AudioPacketWIFI *)netbuf_alloc((*buffer)[0], sizeof(AudioPacketWIFI) - WIFI_MAX_DATA_SIZE + audio->size);
-      data->crc = 0;
-      data->number = audio->num;
-      data->part = 0;
-      data->size = audio->size;
-      memcpy(data->data, audio->data, audio->size);
-      return 1;
-    }
+    return part_max;
   }
   else
   {
@@ -108,10 +134,11 @@ uint8_t audio::buffer::getWiFiPacketFront(netbuf ***buffer)
   }
 }
 
+static uint32_t bleLastNumber = 0;
+
 void audio::buffer::restart()
 {
-  // 刷新缓存
-  for (int i = 0; i < AUDIO_ENCODER_MAX_BUFFER_SIZE; i++)
+  for (int i = 0; i < AUDIO_BUFFER_MAX_BUFFER_SIZE; i++)
   {
     data[i].num = 0;
     data[i].size = 0;
@@ -119,10 +146,12 @@ void audio::buffer::restart()
   data_pointer = 0;
   data_number = 0;
   wifiLastNumber = 0;
+  bleLastNumber = 0;
 }
 
 void audio::buffer::setup()
 {
-  data = (AudioData *)heap_caps_malloc(sizeof(AudioData) * AUDIO_ENCODER_MAX_BUFFER_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_32BIT);
+  data = (AudioData *)heap_caps_malloc(sizeof(AudioData) * AUDIO_BUFFER_MAX_BUFFER_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_32BIT);
   restart();
+  logger::debugln("Audio Buffer is started.");
 }

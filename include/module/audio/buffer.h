@@ -5,14 +5,14 @@
 #include "cinttypes"
 #include "lwip/api.h"
 
-#define AUDIO_ENCODER_MAX_DATA_SIZE (AUDIO_ENCODER_RATE * AUDIO_ENCODER_BIT * AUDIO_ENCODER_CHANNEL / 8 * AUDIO_ENCODER_POLLING_CYCLE / 1000)
-#define AUDIO_ENCODER_MAX_BUFFER_SIZE 25
+#define AUDIO_BUFFER_MAX_DATA_SIZE (AUDIO_ENCODER_RATE * AUDIO_ENCODER_BIT * AUDIO_ENCODER_CHANNEL / 8 * AUDIO_ENCODER_POLLING_CYCLE / 1000)
+#define AUDIO_BUFFER_MAX_BUFFER_SIZE 25
 
 struct AudioData
 {
   uint32_t num;
   uint32_t size;
-  uint8_t data[AUDIO_ENCODER_MAX_DATA_SIZE];
+  uint8_t data[AUDIO_BUFFER_MAX_DATA_SIZE];
 };
 
 namespace audio::buffer
@@ -37,6 +37,6 @@ namespace audio::buffer
 
   /* 读取WiFi数据 */
   // 获取目前的音频数据包分包
-  uint8_t getWiFiPacketFront(netbuf ***buffer);
+  uint8_t getWiFiPacketFront(netbuf ***buffers);
   // uint8_t getWiFiPacketFromNumber(uint32_t number, netbuf **buffer);
 }
