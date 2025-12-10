@@ -5,11 +5,9 @@
 #include "module/audio/encoder.h"
 #include "module/audio/buffer.h"
 
-#include "string"
-#include "vector"
-
-static ConfigServerControl configBasic;
-static AudioServerControl configAudio;
+// 从服务器收到的包
+static ServerControlDevicePacket configDevice;
+static ServerControlAudioPacket configAudio;
 
 /*****************************
           传输层协议
@@ -232,291 +230,246 @@ static bool wifi_open(const char *ssid, const char *password)
 /*****************************
           BLE协议
 *****************************/
-#include "esp_bt.h"
-#include "esp_gap_ble_api.h"
-#include "esp_gatts_api.h"
-#include "esp_bt_defs.h"
-#include "esp_bt_main.h"
-#include "esp_bt_device.h"
-#include "esp_gatt_common_api.h"
+#include "nimble/nimble_port.h"
+#include "nimble/nimble_port_freertos.h"
+#include "host/ble_hs.h"
+#include "host/util/util.h"
+#include "services/gap/ble_svc_gap.h"
 
 static bool bleIsOpen = false;
 static bool bleIsAdvertising = false;
-static const uint16_t bleGattcId = 0;
-static uint16_t bleGattcInterface = ESP_GATT_IF_NONE;
+static uint16_t bleConnectionHandle = 0;
+static ble_l2cap_chan *bleChannel = NULL;
+// 储存池
+#define BLE_L2CAP_COC_BUF_COUNT (20 * MYNEWT_VAL(BLE_L2CAP_COC_MAX_NUM))
+static os_membuf_t bleMemory[OS_MEMPOOL_SIZE(BLE_L2CAP_COC_BUF_COUNT, BLE_L2CAP_MTU)];
+static os_mempool bleMemoryPool;
+static os_mbuf_pool bleBufferpool;
 
-static uint16_t bleInfoServiceHandle;
-static uint16_t bleBatteryServiceHandle;
-static uint16_t bleAudioServiceHandle;
+static void ble_start_advertising();
+static void ble_stop_advertising();
 
-static uint16_t bleDeviceCharHandle;
-static uint16_t bleModelCharHandle;
-static uint16_t bleManufacturerCharHandle;
-static uint16_t bleBatteryCharHandle;
-static uint16_t bleDataCharHandle;
-static uint16_t bleConfigControlCharHandle;
-static uint16_t bleAudioControlCharHandle;
+static void rf_receive_packet(const uint8_t *data, uint16_t len);
 
-static std::vector<uint16_t> bleAttrHandle;
-
-// 特征属性值
-static const char *bleDeviceCharValue = "Wireless Microphone Transmitter";
-static esp_attr_value_t bleDeviceChar =
-    {
-        .attr_max_len = (uint16_t)strlen(bleDeviceCharValue),
-        .attr_len = (uint16_t)strlen(bleDeviceCharValue),
-        .attr_value = (uint8_t *)bleDeviceCharValue,
-};
-static const char *bleModelCharValue = "mic_2_192khz_32bit";
-static esp_attr_value_t bleModelChar =
-    {
-        .attr_max_len = (uint16_t)strlen(bleModelCharValue),
-        .attr_len = (uint16_t)strlen(bleModelCharValue),
-        .attr_value = (uint8_t *)bleModelCharValue,
-};
-static const char *bleManufacturerCharValue = "DUDU233 and TIOSA";
-static esp_attr_value_t bleManufacturerChar =
-    {
-        .attr_max_len = (uint16_t)strlen(bleManufacturerCharValue),
-        .attr_len = (uint16_t)strlen(bleManufacturerCharValue),
-        .attr_value = (uint8_t *)bleManufacturerCharValue,
-};
-static uint8_t bleBatteryCharValue = 100;
-static esp_attr_value_t bleBatteryChar =
-    {
-        .attr_max_len = sizeof(bleBatteryCharValue),
-        .attr_len = sizeof(bleBatteryCharValue),
-        .attr_value = &bleBatteryCharValue,
-};
-static AudioPacketBLE bleDataCharValue;
-static esp_attr_value_t bleDataChar =
-    {
-        .attr_max_len = sizeof(bleDataCharValue),
-        .attr_len = sizeof(bleDataCharValue),
-        .attr_value = (uint8_t *)&bleDataCharValue,
-};
-static ConfigClientControl bleConfigControlCharValue;
-static esp_attr_value_t bleConfigControlChar =
-    {
-        .attr_max_len = sizeof(bleConfigControlCharValue),
-        .attr_len = sizeof(bleConfigControlCharValue),
-        .attr_value = (uint8_t *)&bleConfigControlCharValue,
-};
-static AudioClientControl bleAudioControlCharValue;
-static esp_attr_value_t bleAudioControlChar =
-    {
-        .attr_max_len = sizeof(bleAudioControlCharValue),
-        .attr_len = sizeof(bleAudioControlCharValue),
-        .attr_value = (uint8_t *)&bleAudioControlCharValue,
-};
-
-// 描述符
-esp_bt_uuid_t ble2902UUID = {
-    .len = ESP_UUID_LEN_16,
-    .uuid = {
-        .uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG,
-    },
-};
-
-// 广告数据
-static uint8_t bleServiceUUID[16 * SERVICE_NUM] = {
-    /* LSB <--------------------------------------------------------------------------------> MSB */
-    0xfb,
-    0x34,
-    0x9b,
-    0x5f,
-    0x80,
-    0x00,
-    0x00,
-    0x80,
-    0x00,
-    0x10,
-    0x00,
-    0x00,
-    (uint8_t)INFO_SERVICE_UUID,
-    (uint8_t)(INFO_SERVICE_UUID >> 2),
-    0x00,
-    0x00,
-    /* LSB <--------------------------------------------------------------------------------> MSB */
-    0xfb,
-    0x34,
-    0x9b,
-    0x5f,
-    0x80,
-    0x00,
-    0x00,
-    0x80,
-    0x00,
-    0x10,
-    0x00,
-    0x00,
-    (uint8_t)BATTERY_SERVICE_UUID,
-    (uint8_t)(BATTERY_SERVICE_UUID >> 2),
-    0x00,
-    0x00,
-    /* LSB <--------------------------------------------------------------------------------> MSB */
-    0xfb,
-    0x34,
-    0x9b,
-    0x5f,
-    0x80,
-    0x00,
-    0x00,
-    0x80,
-    0x00,
-    0x10,
-    0x00,
-    0x00,
-    (uint8_t)AUDIO_SERVICE_UUID,
-    (uint8_t)(AUDIO_SERVICE_UUID >> 2),
-    0x00,
-    0x00,
-};
-static esp_ble_adv_data_t bleAdvertisingData = {
-    .set_scan_rsp = false,
-    .include_name = true,
-    .include_txpower = true,
-    .min_interval = 0x0006, // slave connection min interval, Time = min_interval * 1.25 msec
-    .max_interval = 0x0010, // slave connection max interval, Time = max_interval * 1.25 msec
-    .appearance = 0x0221,
-    .manufacturer_len = 0,       // TEST_MANUFACTURER_DATA_LEN,
-    .p_manufacturer_data = NULL, // test_manufacturer,
-    .service_data_len = 0,
-    .p_service_data = NULL,
-    .service_uuid_len = sizeof(bleServiceUUID),
-    .p_service_uuid = bleServiceUUID,
-    .flag = (ESP_BLE_ADV_FLAG_GEN_DISC | ESP_BLE_ADV_FLAG_BREDR_NOT_SPT),
-};
-// scan response data
-static esp_ble_adv_data_t bleAdvertisingScanData = {
-    .set_scan_rsp = true,
-    .include_name = true,
-    .include_txpower = true,
-    .min_interval = 0x0006,
-    .max_interval = 0x0010,
-    .appearance = 0x0221,
-    .manufacturer_len = 0,       // TEST_MANUFACTURER_DATA_LEN,
-    .p_manufacturer_data = NULL, //&test_manufacturer[0],
-    .service_data_len = 0,
-    .p_service_data = NULL,
-    .service_uuid_len = sizeof(bleServiceUUID),
-    .p_service_uuid = bleServiceUUID,
-    .flag = (ESP_BLE_ADV_FLAG_GEN_DISC | ESP_BLE_ADV_FLAG_BREDR_NOT_SPT),
-};
-static esp_ble_adv_params_t bleAdvertisingParams = {
-    .adv_int_min = 0x00A0,
-    .adv_int_max = 0x00B0,
-    .adv_type = ADV_TYPE_IND,
-    .own_addr_type = BLE_ADDR_TYPE_PUBLIC,
-    // .peer_addr            =
-    // .peer_addr_type       =
-    .channel_map = ADV_CHNL_ALL,
-    .adv_filter_policy = ADV_FILTER_ALLOW_SCAN_ANY_CON_ANY,
-};
-
-// 接收到基本配置包
-static bool ble_open();
-static bool ble_close();
-static void ble_config_control_handler(uint8_t *data)
+static int ble_l2cap_handler(struct ble_l2cap_event *event, void *arg)
 {
-  logger::debugln("BLE get config control.");
-  ConfigServerControl *src = (ConfigServerControl *)data;
-  if (configBasic.mode != src->mode)
+  int rc;
+  switch (event->type)
   {
-    configBasic.mode = src->mode;
-  }
-  if (strcmp(configBasic.name, src->name) != 0)
+  // 连接事件
+  case BLE_L2CAP_EVENT_COC_CONNECTED:
   {
-    strcpy(configBasic.name, src->name);
-  }
-  if (strcmp(configBasic.password, src->password) != 0)
-  {
-    strcpy(configBasic.password, src->password);
-  }
-  if (configBasic.startWiFi != src->startWiFi)
-  {
-    configBasic.startWiFi = src->startWiFi;
-    if (configBasic.startWiFi)
+    if (event->connect.status == 0)
     {
-      wifi_open(configBasic.name, configBasic.password);
-      ble_close();
+      ble_l2cap_chan_info chan_info;
+      rc = ble_l2cap_get_chan_info(event->connect.chan, &chan_info);
+      if (rc != 0)
+      {
+        logger::warnln("Failed to get L2CAP channel info: %d", rc);
+        break;
+      }
+      if (chan_info.psm == BLE_L2CAP_PSM)
+      {
+        bleChannel = event->connect.chan;
+        logger::debugln("BLE channel connected.");
+      }
     }
     else
     {
-      wifi_close();
+      logger::warnln("BLE L2CAP COC error: %d", event->connect.status);
     }
+    break;
   }
-  if (configBasic.startBLE != src->startBLE)
+
+  // 断开连接事件
+  case BLE_L2CAP_EVENT_COC_DISCONNECTED:
   {
-    configBasic.startBLE = src->startBLE;
-    if (configBasic.startBLE)
+    ble_l2cap_chan_info chan_info;
+    rc = ble_l2cap_get_chan_info(event->disconnect.chan, &chan_info);
+    if (rc != 0)
     {
-      ble_open();
+      logger::warnln("Failed to get L2CAP channel info: %d", rc);
+      break;
     }
-    else
+    if (chan_info.psm == BLE_L2CAP_PSM)
     {
-      ble_close();
+      bleChannel == NULL;
+      logger::debugln("BLE channel disconnected.");
     }
+    break;
   }
-  if (configBasic.start != src->start)
+
+  // 接收连接事件
+  case BLE_L2CAP_EVENT_COC_ACCEPT:
   {
-    configBasic.start = src->start;
+    ble_l2cap_chan_info chan_info;
+    rc = ble_l2cap_get_chan_info(event->accept.chan, &chan_info);
+    if (rc != 0)
+    {
+      logger::warnln("Failed to get L2CAP channel info: %d", rc);
+      break;
+    }
+    // 接受连接
+    os_mbuf *sdu_rx;
+    sdu_rx = os_mbuf_get_pkthdr(&bleBufferpool, 0);
+    if (!sdu_rx)
+    {
+      logger::warnln("BLE L2CAP accept no memory!");
+      break;
+    }
+    rc = ble_l2cap_recv_ready(event->accept.chan, sdu_rx);
+    if (rc != 0)
+    {
+      logger::warnln("BLE L2CAP accept failed!");
+      break;
+    }
+    logger::debugln("BLE L2CAP accept request for psm=0x%04x.", chan_info.psm);
+    break;
   }
+
+  // 接收到数据事件
+  case BLE_L2CAP_EVENT_COC_DATA_RECEIVED:
+  {
+    if (event->receive.sdu_rx != NULL)
+    {
+      uint16_t data_len = OS_MBUF_PKTLEN(event->receive.sdu_rx);
+      // 将数据从mbuf复制到连续内存
+      uint8_t *data = (uint8_t *)malloc(data_len);
+      if (data)
+      {
+        rc = ble_hs_mbuf_to_flat(event->receive.sdu_rx, data, data_len, NULL);
+        if (rc == 0)
+        {
+          // 解析和处理数据
+          rf_receive_packet(data, data_len);
+        }
+        else
+        {
+          logger::warnln("BLE failed to copy data from mbuf: %d", rc);
+        }
+        free(data);
+      }
+      os_mbuf_free(event->receive.sdu_rx);
+      logger::debugln("BLE received %d bytes on L2CAP channel.", data_len);
+    }
+
+    // 响应数据 准备接收下一个数据包
+    os_mbuf *sdu_rx;
+    sdu_rx = os_mbuf_get_pkthdr(&bleBufferpool, 0);
+    if (!sdu_rx)
+    {
+      logger::warnln("BLE L2CAP accept no memory!");
+      break;
+    }
+    rc = ble_l2cap_recv_ready(event->receive.chan, sdu_rx);
+    if (rc != 0)
+    {
+      logger::warnln("BLE L2CAP accept failed!");
+      break;
+    }
+    break;
+  }
+
+  default:
+  {
+    break;
+  }
+  }
+  return 0;
 }
 
-// 接收到音频配置包
-static void ble_audio_control_handler(uint8_t *data)
+static int ble_gap_handler(struct ble_gap_event *event, void *arg)
 {
-  logger::debugln("BLE get audio control.");
-  AudioServerControl *src = (AudioServerControl *)data;
-  if (configAudio.channel != src->channel)
+  int rc;
+  switch (event->type)
   {
-    configAudio.channel = src->channel;
-    audio::encoder::setChannel(configAudio.channel);
-  }
-  if (configAudio.rate != src->rate)
+  // 连接事件
+  case BLE_GAP_EVENT_CONNECT:
   {
-    configAudio.rate = src->rate;
-    audio::encoder::setRate(configAudio.rate);
-  }
-  if (configAudio.bit != src->bit)
-  {
-    configAudio.bit = src->bit;
-    audio::encoder::setBit(configAudio.bit);
-  }
-  if (configAudio.autoVolumn != src->autoVolumn)
-  {
-    configAudio.autoVolumn = src->autoVolumn;
-    audio::encoder::setGain(configAudio.volumn);
-  }
-  if (configAudio.peekVolumn != src->peekVolumn)
-  {
-    configAudio.peekVolumn = src->peekVolumn;
-    audio::encoder::setPeek(configAudio.peekVolumn);
-  }
-  if (configAudio.volumn != src->volumn)
-  {
-    configAudio.volumn = src->volumn;
-    audio::encoder::setAuto(configAudio.autoVolumn);
-  }
-  if (configAudio.start != src->start)
-  {
-    configAudio.start = src->start;
-    if (configAudio.start)
+    if (event->connect.status == 0)
     {
-      audio::encoder::setRate(configAudio.rate);
-      audio::encoder::setChannel(configAudio.channel);
-      audio::encoder::setBit(configAudio.bit);
-      audio::encoder::on();
-      audio::encoder::setGain(configAudio.volumn);
-      audio::encoder::setPeek(configAudio.peekVolumn);
-      audio::encoder::setAuto(configAudio.autoVolumn);
+      // 连接成功
+      bleConnectionHandle = event->connect.conn_handle;
+      // 创建 L2CAP 服务器
+      rc = ble_l2cap_create_server(BLE_L2CAP_PSM, BLE_L2CAP_MTU, ble_l2cap_handler, NULL);
+
+      if (rc != 0)
+      {
+        logger::warnln("BLE failed to create config L2CAP server: %d", rc);
+      }
+      ble_stop_advertising();
+      logger::debugln("BLE connected, conn_handle: %d", event->connect.conn_handle);
     }
     else
     {
-      audio::encoder::off();
+      // 连接失败
+      ble_start_advertising();
+      logger::warnln("BLE connected failed! status %d", event->connect.status);
     }
+    break;
   }
+
+  // 断开连接事件
+  case BLE_GAP_EVENT_DISCONNECT:
+  {
+    bleConnectionHandle = BLE_HS_CONN_HANDLE_NONE;
+    // 清理L2CAP通道
+    bleChannel = NULL;
+    ble_start_advertising();
+    logger::debugln("BLE disconnected.");
+    break;
+  }
+
+  // 蓝牙广告停止事件
+  case BLE_GAP_EVENT_ADV_COMPLETE:
+  {
+    // 重新开始广告
+    ble_start_advertising();
+    logger::debugln("BLE restart to advertising!");
+    break;
+  }
+
+  default:
+  {
+    break;
+  }
+  }
+  return 0;
+}
+
+// 重置
+static void ble_on_reset(int reason)
+{
+  logger::warnln("BLE reset, reason: %d", reason);
+  ble_stop_advertising();
+  bleConnectionHandle = BLE_HS_CONN_HANDLE_NONE;
+  bleChannel = NULL;
+  bleIsOpen = false;
+}
+
+// NimBLE 协议栈加载完成
+static void ble_on_sync(void)
+{
+  int rc;
+
+  // 设置设备名称
+  rc = ble_svc_gap_device_name_set(BLE_NAME);
+  if (rc != 0)
+  {
+    logger::warnln("BLE set device name failed! reason=%d", rc);
+    return;
+  }
+
+  // 开始广告
+  ble_start_advertising();
+}
+
+void ble_host_task(void *param)
+{
+  logger::debugln("BLE Host Task Started.");
+  /* This function will return only when nimble_port_stop() is executed */
+  nimble_port_run();
+  nimble_port_freertos_deinit();
 }
 
 static void ble_stop_advertising()
@@ -524,7 +477,7 @@ static void ble_stop_advertising()
   if (bleIsAdvertising)
   {
     led::black();
-    esp_ble_gap_stop_advertising();
+    ble_gap_adv_stop();
     bleIsAdvertising = false;
   }
 }
@@ -534,375 +487,53 @@ static void ble_start_advertising()
   if (!bleIsAdvertising)
   {
     led::blue();
-    // 配置广告数据
-    esp_ble_gap_config_adv_data(&bleAdvertisingData);
-    esp_ble_gap_config_adv_data(&bleAdvertisingScanData);
-    // 开始广告
-    esp_ble_gap_start_advertising(&bleAdvertisingParams);
-    bleIsAdvertising = true;
-  }
-}
 
-static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param)
-{
-  switch (event)
-  {
-  // 蓝牙广告开始事件
-  case ESP_GAP_BLE_ADV_START_COMPLETE_EVT:
-  { // advertising start complete event to indicate advertising start successfully or failed
-    if (param->adv_start_cmpl.status != ESP_BT_STATUS_SUCCESS)
-    {
-      logger::warnln("BLE advertising start failed, status %d", param->adv_start_cmpl.status);
-      break;
-    }
-    bleIsAdvertising = true;
-    logger::debugln("BLE advertising start successfully.");
-    break;
-  }
+    struct ble_gap_adv_params adv_params;
+    struct ble_hs_adv_fields fields;
+    const char *name;
+    int rc;
 
-  // 蓝牙广告停止事件
-  case ESP_GAP_BLE_ADV_STOP_COMPLETE_EVT:
-  {
-    if (param->adv_start_cmpl.status != ESP_BT_STATUS_SUCCESS)
+    /**
+     *  Set the advertisement data included in our advertisements:
+     *     o Flags (indicates advertisement type and other general info).
+     *     o Advertising tx power.
+     *     o Device name.
+     *     o 16-bit service UUIDs (alert notifications).
+     */
+    memset(&fields, 0, sizeof(fields));
+    // 配置设备名称
+    name = ble_svc_gap_device_name();
+    fields.name = (uint8_t *)name;
+    fields.name_len = strlen(name);
+    fields.name_is_complete = 1;
+    // 配置发射功率
+    fields.tx_pwr_lvl_is_present = 1;
+    fields.tx_pwr_lvl = BLE_HS_ADV_TX_PWR_LVL_AUTO;
+    // 配置标志:
+    // o Discoverability in forthcoming advertisement (general)
+    // o BLE-only (BR/EDR unsupported).
+    fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
+    rc = ble_gap_adv_set_fields(&fields);
+    if (rc != 0)
     {
-      logger::warnln("BLE advertising stop failed, status %d", param->adv_stop_cmpl.status);
-      break;
-    }
-    bleIsAdvertising = false;
-    logger::debugln("BLE advertising stop successfully");
-    break;
-  }
-
-  default:
-  {
-    break;
-  }
-  }
-}
-
-static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param)
-{
-  // 注册事件
-  if (event == ESP_GATTS_REG_EVT)
-  {
-    if (param->reg.status == ESP_GATT_OK)
-    {
-      bleGattcInterface = gatts_if;
-      // 设置设备名称
-      esp_ble_gap_set_device_name("Microphone Transmitter");
-      // 创建服务
-      // 设备信息服务
-      esp_gatt_srvc_id_t service_uuid = {
-          .id = {
-              .uuid = {
-                  .len = ESP_UUID_LEN_16,
-                  .uuid = {.uuid16 = INFO_SERVICE_UUID},
-              },
-              .inst_id = 0,
-          },
-          .is_primary = true,
-      };
-      esp_ble_gatts_create_service(bleGattcInterface, &service_uuid, 10);
-      // 电池服务
-      service_uuid.id.uuid.uuid.uuid16 = BATTERY_SERVICE_UUID;
-      esp_ble_gatts_create_service(bleGattcInterface, &service_uuid, 6);
-      // 音频服务
-      service_uuid.id.uuid.uuid.uuid16 = AUDIO_SERVICE_UUID;
-      esp_ble_gatts_create_service(bleGattcInterface, &service_uuid, 15);
-      // 开始广告
-      ble_start_advertising();
-      logger::debugln("BLE register app success, app_id %04x", param->reg.app_id);
-    }
-    else
-    {
-      logger::warnln("BLE register app failed, app_id %04x, status %d", param->reg.app_id, param->reg.status);
-    }
-    return;
-  }
-
-  switch (event)
-  {
-    // 属性读取事件
-  case ESP_GATTS_READ_EVT:
-  {
-    // If no response is needed, exit early (stack handles it automatically)
-    if (!param->read.need_rsp)
-    {
+      logger::warnln("BLE error setting advertisement data! rc=%d\n", rc);
       return;
     }
 
-    // logger::debugln("BLE characteristic read, conn_id %d, trans_id %" PRIu32 ", handle %d", param->read.conn_id, param->read.trans_id, param->read.handle);
-    esp_gatt_rsp_t rsp;
-    // rsp.handle = param->read.handle;
-    rsp.attr_value.auth_req = 0;
-    rsp.attr_value.offset = 0;
-    rsp.attr_value.handle = param->read.handle;
-
-    // 处理描述符
-    for (auto &handle : bleAttrHandle)
+    // 开始广告
+    memset(&adv_params, 0, sizeof(adv_params));
+    // adv_params.itvl_min = 0x00A0;
+    // adv_params.itvl_max = 0x00B0;
+    adv_params.conn_mode = BLE_GAP_CONN_MODE_UND;
+    adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN;
+    rc = ble_gap_adv_start(BLE_OWN_ADDR_PUBLIC, NULL, BLE_HS_FOREVER, &adv_params, ble_gap_handler, NULL);
+    if (rc != 0)
     {
-      if (param->read.handle == handle)
-      {
-        memcpy(rsp.attr_value.value, &ble2902UUID, 2);
-        rsp.attr_value.len = 2;
-        esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id, ESP_GATT_OK, &rsp);
-        return;
-      }
+      logger::warnln("BLE error enabling advertisement! rc=%d\n", rc);
+      return;
     }
 
-    // 返回读取到的值
-    if (param->read.handle == bleDeviceCharHandle)
-    {
-      rsp.attr_value.len = bleDeviceChar.attr_len;
-      memcpy(rsp.attr_value.value, bleDeviceChar.attr_value, bleDeviceChar.attr_len);
-    }
-    else if (param->read.handle == bleModelCharHandle)
-    {
-      rsp.attr_value.len = bleModelChar.attr_len;
-      memcpy(rsp.attr_value.value, bleModelChar.attr_value, bleModelChar.attr_len);
-    }
-    else if (param->read.handle == bleManufacturerCharHandle)
-    {
-      rsp.attr_value.len = bleManufacturerChar.attr_len;
-      memcpy(rsp.attr_value.value, bleManufacturerChar.attr_value, bleManufacturerChar.attr_len);
-    }
-    else if (param->read.handle == bleBatteryCharHandle)
-    {
-      rsp.attr_value.len = bleBatteryChar.attr_len;
-      memcpy(rsp.attr_value.value, bleBatteryChar.attr_value, bleBatteryChar.attr_len);
-    }
-    else if (param->read.handle == bleDataCharHandle)
-    {
-      rsp.attr_value.len = bleDataChar.attr_len;
-      memcpy(rsp.attr_value.value, bleDataChar.attr_value, bleDataChar.attr_len);
-    }
-    else if (param->read.handle == bleConfigControlCharHandle)
-    {
-      rsp.attr_value.len = bleConfigControlChar.attr_len;
-      memcpy(rsp.attr_value.value, bleConfigControlChar.attr_value, bleConfigControlChar.attr_len);
-    }
-    else if (param->read.handle == bleAudioControlCharHandle)
-    {
-      rsp.attr_value.len = bleAudioControlChar.attr_len;
-      memcpy(rsp.attr_value.value, bleAudioControlChar.attr_value, bleAudioControlChar.attr_len);
-    }
-    esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id, ESP_GATT_OK, &rsp);
-    break;
-  }
-  // 属性写入事件
-  case ESP_GATTS_WRITE_EVT:
-  {
-    logger::debugln("BLE characteristic write, conn_id %d, trans_id %" PRIu32 ", handle %d, len %d", param->write.conn_id, param->write.trans_id, param->write.handle, param->write.len);
-    if (!param->write.is_prep)
-    {
-      if (param->write.handle == bleConfigControlCharHandle)
-      {
-        logger::debugln("BLE bleConfigControlCharHandle write, len %d", sizeof(ConfigServerControl));
-        if (param->write.len == sizeof(ConfigServerControl))
-        {
-          ble_config_control_handler(param->write.value);
-        }
-      }
-      else if (param->write.handle == bleAudioControlCharHandle)
-      {
-        logger::debugln("BLE AudioServerControl write, len %d", sizeof(AudioServerControl));
-        if (param->write.len == sizeof(AudioServerControl))
-        {
-          ble_audio_control_handler(param->write.value);
-        }
-      }
-      if (param->write.need_rsp)
-      {
-        esp_ble_gatts_send_response(gatts_if, param->write.conn_id, param->write.trans_id, ESP_GATT_OK, NULL);
-      }
-    }
-    break;
-  }
-
-  // 服务创建事件
-  case ESP_GATTS_CREATE_EVT:
-  {
-    logger::debugln("BLE service %d create, status %d, service_handle %d", param->create.service_id.id.uuid.uuid.uuid16, param->create.status, param->create.service_handle);
-    switch (param->create.service_id.id.uuid.uuid.uuid16)
-    {
-    case INFO_SERVICE_UUID:
-    {
-      bleInfoServiceHandle = param->create.service_handle;
-
-      // 添加特征
-      esp_bt_uuid_t char_uuid = {
-          .len = ESP_UUID_LEN_16,
-          .uuid = {
-              .uuid16 = DEVICE_CHARACTERISTIC_UUID,
-          }};
-      esp_ble_gatts_add_char(bleInfoServiceHandle, &char_uuid, ESP_GATT_PERM_READ, ESP_GATT_CHAR_PROP_BIT_READ,
-                             &bleDeviceChar, NULL);
-      char_uuid.uuid.uuid16 = MODEL_CHARACTERISTIC_UUID;
-      esp_ble_gatts_add_char(bleInfoServiceHandle, &char_uuid, ESP_GATT_PERM_READ, ESP_GATT_CHAR_PROP_BIT_READ,
-                             &bleModelChar, NULL);
-      char_uuid.uuid.uuid16 = MANUFACTURER_CHARACTERISTIC_UUID;
-      esp_ble_gatts_add_char(bleInfoServiceHandle, &char_uuid, ESP_GATT_PERM_READ, ESP_GATT_CHAR_PROP_BIT_READ,
-                             &bleManufacturerChar, NULL);
-
-      esp_ble_gatts_start_service(bleInfoServiceHandle);
-      break;
-    }
-    case BATTERY_SERVICE_UUID:
-    {
-      bleBatteryServiceHandle = param->create.service_handle;
-
-      // 添加特征
-      esp_bt_uuid_t char_uuid = {
-          .len = ESP_UUID_LEN_16,
-          .uuid = {
-              .uuid16 = BATTERY_CHARACTERISTIC_UUID,
-          }};
-      esp_ble_gatts_add_char(bleBatteryServiceHandle, &char_uuid, ESP_GATT_PERM_READ, ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_NOTIFY,
-                             &bleBatteryChar, NULL);
-
-      esp_ble_gatts_start_service(bleBatteryServiceHandle);
-      break;
-    }
-    case AUDIO_SERVICE_UUID:
-    {
-      bleAudioServiceHandle = param->create.service_handle;
-
-      // 添加特征
-      esp_bt_uuid_t char_uuid = {
-          .len = ESP_UUID_LEN_16,
-          .uuid = {
-              .uuid16 = DATA_CHARACTERISTIC_UUID,
-          }};
-      esp_ble_gatts_add_char(bleAudioServiceHandle, &char_uuid, ESP_GATT_PERM_READ, ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_NOTIFY,
-                             &bleDataChar, NULL);
-      char_uuid.uuid.uuid16 = CONFIG_CONTROL_CHARACTERISTIC_UUID;
-      esp_ble_gatts_add_char(bleAudioServiceHandle, &char_uuid, ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-                             ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_WRITE | ESP_GATT_CHAR_PROP_BIT_INDICATE,
-                             &bleConfigControlChar, NULL);
-      char_uuid.uuid.uuid16 = AUDIO_CONTROL_CHARACTERISTIC_UUID;
-      esp_ble_gatts_add_char(bleAudioServiceHandle, &char_uuid, ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-                             ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_WRITE | ESP_GATT_CHAR_PROP_BIT_INDICATE,
-                             &bleAudioControlChar, NULL);
-
-      esp_ble_gatts_start_service(bleAudioServiceHandle);
-      break;
-    }
-    }
-    break;
-  }
-
-  // 添加特征事件
-  case ESP_GATTS_ADD_CHAR_EVT:
-  {
-    logger::debugln("BLE characteristic add, status %d, attr_handle %d, service_handle %d",
-                    param->add_char.status, param->add_char.attr_handle, param->add_char.service_handle);
-    uint16_t length = 0;
-    const uint8_t *prf_char;
-    if (param->add_char.service_handle == bleInfoServiceHandle)
-    {
-      switch (param->add_char.char_uuid.uuid.uuid16)
-      {
-      case DEVICE_CHARACTERISTIC_UUID:
-      {
-        bleDeviceCharHandle = param->add_char.attr_handle;
-        break;
-      }
-      case MODEL_CHARACTERISTIC_UUID:
-      {
-        bleModelCharHandle = param->add_char.attr_handle;
-        break;
-      }
-      case MANUFACTURER_CHARACTERISTIC_UUID:
-      {
-        bleManufacturerCharHandle = param->add_char.attr_handle;
-        break;
-      }
-      }
-    }
-    else if (param->add_char.service_handle == bleBatteryServiceHandle)
-    {
-      bleBatteryCharHandle = param->add_char.attr_handle;
-      esp_ble_gatts_add_char_descr(param->add_char.service_handle, &ble2902UUID, ESP_GATT_PERM_READ, NULL, NULL);
-    }
-    else if (param->add_char.service_handle == bleAudioServiceHandle)
-    {
-      switch (param->add_char.char_uuid.uuid.uuid16)
-      {
-      case DATA_CHARACTERISTIC_UUID:
-      {
-        bleDataCharHandle = param->add_char.attr_handle;
-        break;
-      }
-      case CONFIG_CONTROL_CHARACTERISTIC_UUID:
-      {
-        bleConfigControlCharHandle = param->add_char.attr_handle;
-        break;
-      }
-      case AUDIO_CONTROL_CHARACTERISTIC_UUID:
-      {
-        bleAudioControlCharHandle = param->add_char.attr_handle;
-        break;
-      }
-      }
-      esp_ble_gatts_add_char_descr(param->add_char.service_handle, &ble2902UUID, ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE, NULL, NULL);
-    }
-    break;
-  }
-
-  // 添加描述事件
-  case ESP_GATTS_ADD_CHAR_DESCR_EVT:
-  {
-    if (param->add_char_descr.service_handle == bleBatteryServiceHandle || param->add_char_descr.service_handle == bleAudioServiceHandle)
-    {
-      bleAttrHandle.push_back(param->add_char_descr.attr_handle);
-    }
-    logger::debugln("BLE descriptor add, status %d, attr_handle %d, service_handle %d",
-                    param->add_char_descr.status, param->add_char_descr.attr_handle, param->add_char_descr.service_handle);
-    break;
-  }
-
-  // 蓝牙连接到设备事件
-  case ESP_GATTS_CONNECT_EVT:
-  {
-    ble_stop_advertising();
-    esp_ble_conn_update_params_t conn_params = {0};
-    memcpy(conn_params.bda, param->connect.remote_bda, sizeof(esp_bd_addr_t));
-    /* For the IOS system, please reference the apple official documents about the ble connection parameters restrictions. */
-    conn_params.latency = 0;
-    conn_params.max_int = 0x20; // max_int = 0x20*1.25ms = 40ms
-    conn_params.min_int = 0x00; // min_int = 0x10*1.25ms = 20ms
-    conn_params.timeout = 300;  // timeout = 400*10ms = 3000ms
-    // start sent the update connection parameters to the peer device.
-    esp_ble_gap_update_conn_params(&conn_params);
-    logger::debugln("BLE connected, conn_id %u, remote " ESP_BD_ADDR_STR "",
-                    param->connect.conn_id, ESP_BD_ADDR_HEX(param->connect.remote_bda));
-    break;
-  }
-
-  // 蓝牙断开连接事件
-  case ESP_GATTS_DISCONNECT_EVT:
-  {
-    ble_start_advertising();
-    logger::debugln("BLE disconnected, remote " ESP_BD_ADDR_STR ", reason 0x%02x",
-                    ESP_BD_ADDR_HEX(param->disconnect.remote_bda), param->disconnect.reason);
-    break;
-  }
-
-  case ESP_GATTS_OPEN_EVT:
-  case ESP_GATTS_CANCEL_OPEN_EVT:
-  case ESP_GATTS_CLOSE_EVT:
-  case ESP_GATTS_LISTEN_EVT:
-  case ESP_GATTS_CONGEST_EVT:
-  case ESP_GATTS_UNREG_EVT:
-  case ESP_GATTS_ADD_INCL_SRVC_EVT:
-  case ESP_GATTS_EXEC_WRITE_EVT:
-  case ESP_GATTS_MTU_EVT:
-  case ESP_GATTS_DELETE_EVT:
-  case ESP_GATTS_START_EVT:
-  case ESP_GATTS_STOP_EVT:
-  case ESP_GATTS_CONF_EVT:
-  default:
-    break;
+    bleIsAdvertising = true;
   }
 }
 
@@ -910,88 +541,36 @@ static bool ble_close()
 {
   if (bleIsOpen)
   {
-
     // 停止广告
     ble_stop_advertising();
 
     // 断开所有连接
-    esp_ble_gatts_close(bleGattcInterface, 0);
-
-    // 注销GATTS应用
-    esp_err_t ret = esp_ble_gatts_app_unregister(bleGattcId);
-    if (ret != ESP_OK)
+    if (bleConnectionHandle != BLE_HS_CONN_HANDLE_NONE)
     {
-      logger::warnln("BLE gatts app unregister failed: %s", esp_err_to_name(ret));
+      int rc = ble_gap_terminate(bleConnectionHandle, BLE_ERR_REM_USER_CONN_TERM);
+      if (rc != 0)
+      {
+        logger::warnln("BLE terminate connection failed: %d", rc);
+      }
+      bleConnectionHandle = BLE_HS_CONN_HANDLE_NONE;
     }
 
-    // 注销GATTS回调函数
-    ret = esp_ble_gatts_register_callback(NULL);
-    if (ret != ESP_OK)
+    // 停止NimBLE主机任务
+    nimble_port_stop();
+
+    // 反初始化NimBLE
+    int rc = nimble_port_deinit();
+    if (rc != 0)
     {
-      logger::warnln("BLE gatts unregister callback failed: %s", esp_err_to_name(ret));
+      logger::warnln("NimBLE deinit failed: %d", rc);
     }
 
-    // 注销GAP回调函数
-    ret = esp_ble_gap_register_callback(NULL);
-    if (ret != ESP_OK)
-    {
-      logger::warnln("BLE gap unregister callback failed: %s", esp_err_to_name(ret));
-    }
-
-    // 禁用Bluedroid
-    ret = esp_bluedroid_disable();
-    if (ret != ESP_OK)
-    {
-      logger::warnln("BLE bluedroid disable failed: %s", esp_err_to_name(ret));
-    }
-
-    ret = esp_bluedroid_deinit();
-    if (ret != ESP_OK)
-    {
-      logger::warnln("BLE bluedroid deinit failed: %s", esp_err_to_name(ret));
-    }
-
-    // 禁用蓝牙控制器
-    ret = esp_bt_controller_disable();
-    if (ret != ESP_OK)
-    {
-      logger::warnln("BLE controller disable failed: %s", esp_err_to_name(ret));
-    }
-
-    ret = esp_bt_controller_deinit();
-    if (ret != ESP_OK)
-    {
-      logger::warnln("BLE controller deinit failed: %s", esp_err_to_name(ret));
-    }
-
-    // 释放蓝牙控制器内存
-    ret = esp_bt_controller_mem_release(ESP_BT_MODE_BLE);
-    if (ret != ESP_OK)
-    {
-      logger::warnln("BLE controller memory release failed: %s", esp_err_to_name(ret));
-    }
+    // 清理内存池
+    os_mempool_clear(&bleMemoryPool);
 
     // 清理全局状态
-    bleIsAdvertising = false;
-    bleGattcInterface = ESP_GATT_IF_NONE;
-
-    // 清空句柄向量
-    bleAttrHandle.clear();
-
-    // 重置服务句柄
-    bleInfoServiceHandle = 0;
-    bleBatteryServiceHandle = 0;
-    bleAudioServiceHandle = 0;
-
-    // 重置特征句柄
-    bleDeviceCharHandle = 0;
-    bleModelCharHandle = 0;
-    bleManufacturerCharHandle = 0;
-    bleBatteryCharHandle = 0;
-    bleDataCharHandle = 0;
-    bleConfigControlCharHandle = 0;
-    bleAudioControlCharHandle = 0;
-
+    bleConnectionHandle = BLE_HS_CONN_HANDLE_NONE;
+    bleChannel = NULL;
     bleIsOpen = false;
   }
   logger::debugln("BLE is close.");
@@ -1005,73 +584,212 @@ static bool ble_open()
     ble_close();
   }
 
-  esp_err_t ret;
-  ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT));
-
-  // 初始化蓝牙控制器
-  esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
-  ret = esp_bt_controller_init(&bt_cfg);
-  if (ret)
+  // 初始化 NimBLE
+  esp_err_t ret = nimble_port_init();
+  if (ret != ESP_OK)
   {
-    logger::warnln("BLE controller initialize failed: %s", esp_err_to_name(ret));
-    return false;
-  }
-  ret = esp_bt_controller_enable(ESP_BT_MODE_BLE);
-  if (ret)
-  {
-    logger::warnln("BLE controller enable failed: %s", esp_err_to_name(ret));
+    logger::warnln("BLE port init failed: %d", ret);
     return false;
   }
 
-  esp_bluedroid_config_t cfg = BT_BLUEDROID_INIT_CONFIG_DEFAULT();
-  ret = esp_bluedroid_init_with_cfg(&cfg);
-  if (ret)
+  // 初始化配置
+  ble_hs_cfg.reset_cb = ble_on_reset;
+  ble_hs_cfg.sync_cb = ble_on_sync;
+  ble_hs_cfg.store_status_cb = NULL;
+
+  // 创建接受池
+  ret = os_mempool_init(&bleMemoryPool, BLE_L2CAP_COC_BUF_COUNT, BLE_L2CAP_MTU, bleMemory, "coc_sdu_pool");
+  if (ret != 0)
   {
-    logger::warnln("BLE bluedroid init failed: %s", esp_err_to_name(ret));
+    logger::warnln("BLE os_mempool_init failed: %d", ret);
     return false;
   }
-  ret = esp_bluedroid_enable();
-  if (ret)
+  ret = os_mbuf_pool_init(&bleBufferpool, &bleMemoryPool, BLE_L2CAP_MTU, BLE_L2CAP_COC_BUF_COUNT);
+  if (ret != 0)
   {
-    logger::warnln("BLE bluedroid enable failed: %s", esp_err_to_name(ret));
+    logger::warnln("BLE os_mbuf_pool_init failed: %d", ret);
     return false;
   }
 
-  // Note: Avoid performing time-consuming operations within callback functions.
-  ret = esp_ble_gap_register_callback(gap_event_handler);
-  if (ret)
-  {
-    logger::warnln("BLE gap register failed: %s", esp_err_to_name(ret));
-    return false;
-  }
-  ret = esp_ble_gatts_register_callback(gatts_event_handler);
-  if (ret)
-  {
-    logger::warnln("BLE gatts register failed: %s", esp_err_to_name(ret));
-    return false;
-  }
-
-  ret = esp_ble_gatts_app_register(bleGattcId);
-  if (ret)
-  {
-    logger::warnln("BLE gatts app register error: %s", esp_err_to_name(ret));
-    return false;
-  }
-
-  ret = esp_ble_gatt_set_local_mtu(517);
-  if (ret)
-  {
-    logger::warnln("BLE set local  MTU failed, error code = %x", ret);
-  }
+  // 启动 NimBLE 主机任务
+  nimble_port_freertos_init(ble_host_task);
 
   bleIsOpen = true;
   logger::debugln("BLE is started.");
   return true;
 }
+
+// 发送数据
+bool ble_send(const uint8_t *data, uint16_t len)
+{
+  if (!bleIsOpen || !bleChannel)
+  {
+    logger::warnln("BLE channel not ready.");
+    return false;
+  }
+
+  if (len > BLE_L2CAP_MTU)
+  {
+    logger::warnln("BLE data too large for L2CAP MTU.");
+    return false;
+  }
+
+  struct os_mbuf *om = ble_hs_mbuf_from_flat(data, len);
+  if (!om)
+  {
+    logger::warnln("BLE failed to allocate mbuf.");
+    return false;
+  }
+
+  int rc = ble_l2cap_send(bleChannel, om);
+  if (rc != 0)
+  {
+    logger::warnln("BLE failed to send data: %d", rc);
+    os_mbuf_free_chain(om);
+    return false;
+  }
+
+  logger::debugln("BLE sent %d bytes.", len);
+  return true;
+}
 /****************************/
 
-// static AudioPacketUDP packet;
-static uint32_t packet_last_num;
+// 解析数据包
+static void rf_receive_packet(const uint8_t *data, uint16_t len)
+{
+  Packet *packet = (Packet *)data;
+  switch (packet->type)
+  {
+  // WiFi音频数据包
+  case PACKET_TYPE_WIFI_AUDIO:
+  {
+    break;
+  }
+
+  // 蓝牙音频数据包
+  case PACKET_TYPE_BLE_AUDIO:
+  {
+    break;
+  }
+
+  // 配置设备
+  case PACKET_TYPE_SERVER_CONTROL_DEVICE:
+  {
+    logger::debugln("BLE get config control.");
+    ServerControlDevicePacket *src = &packet->packet.serverControlDevice;
+    if (configDevice.mode != src->mode)
+    {
+      configDevice.mode = src->mode;
+    }
+    if (strcmp(configDevice.name, src->name) != 0)
+    {
+      strcpy(configDevice.name, src->name);
+    }
+    if (strcmp(configDevice.password, src->password) != 0)
+    {
+      strcpy(configDevice.password, src->password);
+    }
+    if (configDevice.startWiFi != src->startWiFi)
+    {
+      configDevice.startWiFi = src->startWiFi;
+      if (configDevice.startWiFi)
+      {
+        wifi_open(configDevice.name, configDevice.password);
+        ble_close();
+      }
+      else
+      {
+        wifi_close();
+      }
+    }
+    if (configDevice.startBLE != src->startBLE)
+    {
+      configDevice.startBLE = src->startBLE;
+      if (configDevice.startBLE)
+      {
+        ble_open();
+      }
+      else
+      {
+        ble_close();
+      }
+    }
+    if (configDevice.start != src->start)
+    {
+      configDevice.start = src->start;
+    }
+    break;
+  }
+
+  // 配置音频
+  case PACKET_TYPE_SERVER_CONTROL_AUDIO:
+  {
+    logger::debugln("BLE get audio control.");
+    ServerControlAudioPacket *src = &packet->packet.serverControlAudio;
+    if (configAudio.channel != src->channel)
+    {
+      configAudio.channel = src->channel;
+      audio::encoder::setChannel(configAudio.channel);
+    }
+    if (configAudio.rate != src->rate)
+    {
+      configAudio.rate = src->rate;
+      audio::encoder::setRate(configAudio.rate);
+    }
+    if (configAudio.bit != src->bit)
+    {
+      configAudio.bit = src->bit;
+      audio::encoder::setBit(configAudio.bit);
+    }
+    if (configAudio.autoVolumn != src->autoVolumn)
+    {
+      configAudio.autoVolumn = src->autoVolumn;
+      audio::encoder::setGain(configAudio.volumn);
+    }
+    if (configAudio.peekVolumn != src->peekVolumn)
+    {
+      configAudio.peekVolumn = src->peekVolumn;
+      audio::encoder::setPeek(configAudio.peekVolumn);
+    }
+    if (configAudio.volumn != src->volumn)
+    {
+      configAudio.volumn = src->volumn;
+      audio::encoder::setAuto(configAudio.autoVolumn);
+    }
+    if (configAudio.start != src->start)
+    {
+      configAudio.start = src->start;
+      if (configAudio.start)
+      {
+        audio::encoder::setRate(configAudio.rate);
+        audio::encoder::setChannel(configAudio.channel);
+        audio::encoder::setBit(configAudio.bit);
+        audio::encoder::on();
+        audio::encoder::setGain(configAudio.volumn);
+        audio::encoder::setPeek(configAudio.peekVolumn);
+        audio::encoder::setAuto(configAudio.autoVolumn);
+      }
+      else
+      {
+        audio::encoder::off();
+      }
+    }
+    break;
+  }
+
+  // 服务器响应ACK
+  case PACKET_TYPE_SERVER_ACK:
+  {
+    break;
+  }
+
+  default:
+  {
+    break;
+  }
+  }
+}
+
 static void rf_handle(void *arg)
 {
   TickType_t xLastWakeTime = xTaskGetTickCount();
@@ -1080,12 +798,11 @@ static void rf_handle(void *arg)
   {
     xTaskDelayUntil(&xLastWakeTime, xFrequency);
 
-    if (configBasic.start)
+    if (configDevice.start)
     {
-      switch (configBasic.mode)
+      if (configDevice.mode)
       {
-      case AUDIO_CONTROL_MODE_WIFI:
-      {
+        // WIFI 模式
         if (wifiIsOpen && socketIsOpen)
         {
           netbuf **buf = NULL;
@@ -1096,15 +813,13 @@ static void rf_handle(void *arg)
           }
           free(buf);
         }
-        break;
       }
-      case AUDIO_CONTROL_MODE_BLE:
+      else
       {
+        // BLE 模式
         if (bleIsOpen)
         {
         }
-        break;
-      }
       }
     }
   }

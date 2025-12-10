@@ -65,7 +65,7 @@ uint8_t audio::buffer::getWiFiPacketFront(netbuf ***buffers)
   {
     wifiLastNumber = audio->num; // 已发送
 
-    uint8_t part_max = audio->size / WIFI_PACKET_DATA_MAX_SIZE + 1;
+    uint8_t part_max = audio->size / PACKET_WIFI_AUDIO_DATA_MAX_SIZE + 1;
     *buffers = (netbuf **)malloc(sizeof(netbuf *) * part_max);
     if (*buffers == NULL)
     {
@@ -79,12 +79,12 @@ uint8_t audio::buffer::getWiFiPacketFront(netbuf ***buffers)
       uint16_t part_size;
       if (part != part_max - 1)
       {
-        part_size = WIFI_PACKET_DATA_MAX_SIZE;
+        part_size = PACKET_WIFI_AUDIO_DATA_MAX_SIZE;
       }
       else
       {
         // 最后一个包不一定是满的
-        part_size = audio->size - WIFI_PACKET_DATA_MAX_SIZE * (part_max - 1);
+        part_size = audio->size - PACKET_WIFI_AUDIO_DATA_MAX_SIZE * (part_max - 1);
       }
 
       // 初始化结构体
@@ -105,8 +105,8 @@ uint8_t audio::buffer::getWiFiPacketFront(netbuf ***buffers)
       (*buffers)[part] = buffer;
 
       // 复制数据
-      AudioPacketWIFI *data = (AudioPacketWIFI *)netbuf_alloc(buffer, WIFI_PACKET_HEAD_SIZE + part_size);
-      if (data == NULL)
+      Packet *packet = (Packet *)netbuf_alloc(buffer, PACKET_WIFI_AUDIO_HEAD_SIZE + part_size);
+      if (packet == NULL)
       {
         // 释放当前buffer
         netbuf_delete((*buffers)[part]);
@@ -120,11 +120,11 @@ uint8_t audio::buffer::getWiFiPacketFront(netbuf ***buffers)
         logger::warnln("Socket netbuf_alloc() malloc failed!");
         return 0;
       }
-      data->type = AUDIO_PACKET_WIFI_TYPE_DATA;
-      data->size = part_size;
-      data->number = audio->num;
-      data->part = part;
-      memcpy(data->data, audio->data + WIFI_PACKET_DATA_MAX_SIZE * part, part_size);
+      packet->type = PACKET_TYPE_WIFI_AUDIO;
+      packet->packet.audioDataWiFi.size = part_size;
+      packet->packet.audioDataWiFi.number = audio->num;
+      packet->packet.audioDataWiFi.part = part;
+      memcpy(packet->packet.audioDataWiFi.data, audio->data + PACKET_WIFI_AUDIO_DATA_MAX_SIZE * part, part_size);
     }
     return part_max;
   }

@@ -21,10 +21,6 @@ namespace audio::buffer
   // 重置指针
   void restart();
 
-  /* 写入数据 */
-  // 获取写入数据的指针
-  uint8_t *getWritePointer(uint32_t packet_size);
-
   /* 原始方法 */
   // 获取当前指针
   uint8_t getPointer();
@@ -34,6 +30,10 @@ namespace audio::buffer
   AudioData *getAudioDataFront();
   // 根据音频包号码获取音频原始数据包
   AudioData *getAudioDataFromNumber(uint32_t number);
+
+  /* 写入数据 */
+  // 获取写入数据的指针
+  uint8_t *getWritePointer(uint32_t packet_size);
 
   /* 读取WiFi数据 */
   // 获取目前的音频数据包分包
