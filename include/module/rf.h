@@ -10,6 +10,7 @@
 #define WIFI_FAIL_BIT BIT1
 #define WIFI_IP_PROTOCOL 0xE9
 #define WIFI_NO_PORT 0
+#define WIFI_IP_HEAD_LEN 20
 
 // 客户端状态
 #define PACKET_CLIENT_STATUS_SIZE (sizeof(uint8_t) + sizeof(ClientStatusPacket))
@@ -74,7 +75,7 @@ enum PacketType
   PACKET_TYPE_CLIENT_ACK = 2,
   PACKET_TYPE_SERVER_ACK = 3,
   PACKET_TYPE_CLIENT_STATUS = 4,
-  PACKET_TYPE_SERVER_CONTROL_DEVICE  = 5,
+  PACKET_TYPE_SERVER_CONTROL_DEVICE = 5,
   PACKET_TYPE_SERVER_CONTROL_AUDIO = 6,
 };
 struct __attribute__((packed)) Packet

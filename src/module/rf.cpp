@@ -5,9 +5,7 @@
 #include "module/audio/encoder.h"
 #include "module/audio/buffer.h"
 
-// 从服务器收到的包
-static ServerControlDevicePacket configDevice;
-static ServerControlAudioPacket configAudio;
+#include "queue"
 
 /*****************************
           传输层协议
@@ -15,18 +13,37 @@ static ServerControlAudioPacket configAudio;
 #include "lwip/err.h"
 #include "lwip/api.h"
 static bool socketIsOpen = false;
-static netconn *socketInstance;
+static netconn *socketSendInstance = NULL;
+static netconn *socketReceiveInstance = NULL;
 static ip_addr_t socketDestination;
 
+// 发送数据 需要 netbuf_new
 static bool socket_send(netbuf *buf)
 {
-  err_t err = netconn_sendto(socketInstance, buf, &socketDestination, WIFI_NO_PORT);
+  err_t err = netconn_sendto(socketSendInstance, buf, &socketDestination, WIFI_NO_PORT);
   if (err != ERR_OK)
   {
     logger::warnln("Socket send failed: %d", err);
+    return false;
   }
   // 释放
   netbuf_delete(buf);
+  return true;
+}
+
+// 读取数据 需要 netbuf_delete
+static bool socket_receive(netbuf **buf)
+{
+  err_t err = netconn_recv(socketReceiveInstance, buf);
+  if (err == ERR_WOULDBLOCK)
+  {
+    return false;
+  }
+  else if (err != ERR_OK)
+  {
+    logger::warnln("Socket receive failed: %d", err);
+    return false;
+  }
   return true;
 }
 
@@ -35,10 +52,15 @@ static bool socket_close()
   if (socketIsOpen)
   {
     socketIsOpen = false;
-    if (socketInstance != NULL)
+    if (socketSendInstance != NULL)
     {
-      netconn_delete(socketInstance);
-      socketInstance = NULL;
+      netconn_delete(socketSendInstance);
+      socketSendInstance = NULL;
+    }
+    if (socketReceiveInstance != NULL)
+    {
+      netconn_delete(socketReceiveInstance);
+      socketReceiveInstance = NULL;
     }
   }
   logger::debugln("Socket is shutdown.");
@@ -53,28 +75,47 @@ static bool socket_open(uint32_t localIP, uint32_t destIP)
   }
 
   // 创建
-  socketInstance = netconn_new_with_proto_and_callback(NETCONN_RAW, WIFI_IP_PROTOCOL, NULL);
-  if (socketInstance == NULL)
+  socketSendInstance = netconn_new_with_proto_and_callback(NETCONN_RAW, WIFI_IP_PROTOCOL, NULL);
+  if (socketSendInstance == NULL)
   {
     logger::warnln("Socket unable to create:!");
     return false;
   }
-
-  // 绑定到本地地址
-  ip_addr_t local_ip = {.addr = localIP};
-  err_t ret = netconn_bind(socketInstance, &local_ip, WIFI_NO_PORT);
-  if (ret != ERR_OK)
+  socketReceiveInstance = netconn_new_with_proto_and_callback(NETCONN_RAW, WIFI_IP_PROTOCOL, NULL);
+  if (socketReceiveInstance == NULL)
   {
-    logger::warnln("Socket netconn bind failed: %d", ret);
-    netconn_delete(socketInstance);
-    socketInstance = NULL;
+    netconn_delete(socketSendInstance);
+    logger::warnln("Socket unable to create:!");
     return false;
   }
-  // 绑定远程地址
+
+  // 绑定到指定地址
+  ip_addr_t local_ip = {.addr = localIP};
+  err_t ret = netconn_bind(socketSendInstance, &local_ip, WIFI_NO_PORT);
+  if (ret != ERR_OK)
+  {
+    netconn_delete(socketSendInstance);
+    socketSendInstance = NULL;
+    netconn_delete(socketReceiveInstance);
+    socketReceiveInstance = NULL;
+    logger::warnln("Socket netconn bind failed: %d", ret);
+    return false;
+  }
+  ret = netconn_bind(socketReceiveInstance, IP_ADDR_ANY, WIFI_NO_PORT);
+  if (ret != ERR_OK)
+  {
+    netconn_delete(socketSendInstance);
+    socketSendInstance = NULL;
+    netconn_delete(socketReceiveInstance);
+    socketReceiveInstance = NULL;
+    logger::warnln("Socket netconn bind failed: %d", ret);
+    return false;
+  }
+  // 远程地址
   socketDestination.addr = destIP;
 
   // 设置非阻塞模式
-  // netconn_set_nonblocking(socketInstance, true);
+  netconn_set_nonblocking(socketReceiveInstance, true);
 
   socketIsOpen = true;
   logger::debugln("Socket is started.");
@@ -237,6 +278,7 @@ static bool wifi_open(const char *ssid, const char *password)
 #include "services/gap/ble_svc_gap.h"
 
 static bool bleIsOpen = false;
+static bool bleIsClosing = false;
 static bool bleIsAdvertising = false;
 static uint16_t bleConnectionHandle = 0;
 static ble_l2cap_chan *bleChannel = NULL;
@@ -245,11 +287,10 @@ static ble_l2cap_chan *bleChannel = NULL;
 static os_membuf_t bleMemory[OS_MEMPOOL_SIZE(BLE_L2CAP_COC_BUF_COUNT, BLE_L2CAP_MTU)];
 static os_mempool bleMemoryPool;
 static os_mbuf_pool bleBufferpool;
+static std::queue<uint8_t *> bleReceive;
 
 static void ble_start_advertising();
 static void ble_stop_advertising();
-
-static void rf_receive_packet(const uint8_t *data, uint16_t len);
 
 static int ble_l2cap_handler(struct ble_l2cap_event *event, void *arg)
 {
@@ -323,7 +364,7 @@ static int ble_l2cap_handler(struct ble_l2cap_event *event, void *arg)
       logger::warnln("BLE L2CAP accept failed!");
       break;
     }
-    logger::debugln("BLE L2CAP accept request for psm=0x%04x.", chan_info.psm);
+    logger::debugln("BLE L2CAP accept request for psm=%d.", chan_info.psm);
     break;
   }
 
@@ -333,24 +374,12 @@ static int ble_l2cap_handler(struct ble_l2cap_event *event, void *arg)
     if (event->receive.sdu_rx != NULL)
     {
       uint16_t data_len = OS_MBUF_PKTLEN(event->receive.sdu_rx);
-      // 将数据从mbuf复制到连续内存
-      uint8_t *data = (uint8_t *)malloc(data_len);
-      if (data)
-      {
-        rc = ble_hs_mbuf_to_flat(event->receive.sdu_rx, data, data_len, NULL);
-        if (rc == 0)
-        {
-          // 解析和处理数据
-          rf_receive_packet(data, data_len);
-        }
-        else
-        {
-          logger::warnln("BLE failed to copy data from mbuf: %d", rc);
-        }
-        free(data);
-      }
+      // 放进接收队列
+      uint8_t *packet = (uint8_t *)heap_caps_malloc(event->receive.sdu_rx->om_len, MALLOC_CAP_SPIRAM);
+      memcpy(packet, event->receive.sdu_rx->om_data, event->receive.sdu_rx->om_len);
+      bleReceive.push(packet);
       os_mbuf_free(event->receive.sdu_rx);
-      logger::debugln("BLE received %d bytes on L2CAP channel.", data_len);
+      logger::debugln("BLE received %d bytes on L2CAP channel.", event->receive.sdu_rx->om_len);
     }
 
     // 响应数据 准备接收下一个数据包
@@ -415,8 +444,11 @@ static int ble_gap_handler(struct ble_gap_event *event, void *arg)
     bleConnectionHandle = BLE_HS_CONN_HANDLE_NONE;
     // 清理L2CAP通道
     bleChannel = NULL;
-    ble_start_advertising();
-    logger::debugln("BLE disconnected.");
+    if (!bleIsClosing && bleIsOpen)
+    {
+      ble_start_advertising();
+    }
+    logger::debugln("BLE disconnected. reason=%d", event->disconnect.reason);
     break;
   }
 
@@ -539,40 +571,45 @@ static void ble_start_advertising()
 
 static bool ble_close()
 {
+  bleIsClosing = true;
   if (bleIsOpen)
   {
+    int rc;
     // 停止广告
     ble_stop_advertising();
 
-    // 断开所有连接
-    if (bleConnectionHandle != BLE_HS_CONN_HANDLE_NONE)
-    {
-      int rc = ble_gap_terminate(bleConnectionHandle, BLE_ERR_REM_USER_CONN_TERM);
-      if (rc != 0)
-      {
-        logger::warnln("BLE terminate connection failed: %d", rc);
-      }
-      bleConnectionHandle = BLE_HS_CONN_HANDLE_NONE;
-    }
-
     // 停止NimBLE主机任务
     nimble_port_stop();
-
+    if (rc != 0)
+    {
+      logger::warnln("NimBLE stop failed: %d", rc);
+      bleIsClosing = false;
+      return false;
+    }
     // 反初始化NimBLE
-    int rc = nimble_port_deinit();
+    rc = nimble_port_deinit();
     if (rc != 0)
     {
       logger::warnln("NimBLE deinit failed: %d", rc);
+      bleIsClosing = false;
+      return false;
     }
 
-    // 清理内存池
-    os_mempool_clear(&bleMemoryPool);
+    // 清理内存池os_error_t
+    rc = os_mempool_clear(&bleMemoryPool);
+    if (rc != OS_OK)
+    {
+      logger::warnln("NimBLE os_mempool_clear failed: %d", rc);
+      bleIsClosing = false;
+      return false;
+    }
 
     // 清理全局状态
     bleConnectionHandle = BLE_HS_CONN_HANDLE_NONE;
     bleChannel = NULL;
     bleIsOpen = false;
   }
+  bleIsClosing = false;
   logger::debugln("BLE is close.");
   return true;
 }
@@ -655,19 +692,13 @@ bool ble_send(const uint8_t *data, uint16_t len)
 /****************************/
 
 // 解析数据包
-static void rf_receive_packet(const uint8_t *data, uint16_t len)
+static void rf_receive_packet(const uint8_t *data)
 {
   Packet *packet = (Packet *)data;
   switch (packet->type)
   {
-  // WiFi音频数据包
-  case PACKET_TYPE_WIFI_AUDIO:
-  {
-    break;
-  }
-
-  // 蓝牙音频数据包
-  case PACKET_TYPE_BLE_AUDIO:
+  // 服务器响应ACK
+  case PACKET_TYPE_SERVER_ACK:
   {
     break;
   }
@@ -675,37 +706,37 @@ static void rf_receive_packet(const uint8_t *data, uint16_t len)
   // 配置设备
   case PACKET_TYPE_SERVER_CONTROL_DEVICE:
   {
-    logger::debugln("BLE get config control.");
+    logger::debugln("RF get config control.");
     ServerControlDevicePacket *src = &packet->packet.serverControlDevice;
-    if (configDevice.mode != src->mode)
+    if (config::value.device.mode != src->mode)
     {
-      configDevice.mode = src->mode;
+      config::value.device.mode = src->mode;
     }
-    if (strcmp(configDevice.name, src->name) != 0)
+    if (strcmp(config::value.device.name, src->name) != 0)
     {
-      strcpy(configDevice.name, src->name);
+      strcpy(config::value.device.name, src->name);
     }
-    if (strcmp(configDevice.password, src->password) != 0)
+    if (strcmp(config::value.device.password, src->password) != 0)
     {
-      strcpy(configDevice.password, src->password);
+      strcpy(config::value.device.password, src->password);
     }
-    if (configDevice.startWiFi != src->startWiFi)
+    if (config::value.device.startWiFi != src->startWiFi)
     {
-      configDevice.startWiFi = src->startWiFi;
-      if (configDevice.startWiFi)
+      config::value.device.startWiFi = src->startWiFi;
+      if (config::value.device.startWiFi)
       {
-        wifi_open(configDevice.name, configDevice.password);
-        ble_close();
+        wifi_open(config::value.device.name, config::value.device.password);
       }
       else
       {
         wifi_close();
       }
     }
-    if (configDevice.startBLE != src->startBLE)
+    logger::debugln("startble = %d", src->startBLE);
+    if (config::value.device.startBLE != src->startBLE)
     {
-      configDevice.startBLE = src->startBLE;
-      if (configDevice.startBLE)
+      config::value.device.startBLE = src->startBLE;
+      if (config::value.device.startBLE)
       {
         ble_open();
       }
@@ -714,9 +745,9 @@ static void rf_receive_packet(const uint8_t *data, uint16_t len)
         ble_close();
       }
     }
-    if (configDevice.start != src->start)
+    if (config::value.device.start != src->start)
     {
-      configDevice.start = src->start;
+      config::value.device.start = src->start;
     }
     break;
   }
@@ -726,48 +757,48 @@ static void rf_receive_packet(const uint8_t *data, uint16_t len)
   {
     logger::debugln("BLE get audio control.");
     ServerControlAudioPacket *src = &packet->packet.serverControlAudio;
-    if (configAudio.channel != src->channel)
+    if (config::value.audio.channel != src->channel)
     {
-      configAudio.channel = src->channel;
-      audio::encoder::setChannel(configAudio.channel);
+      config::value.audio.channel = src->channel;
+      audio::encoder::setChannel(config::value.audio.channel);
     }
-    if (configAudio.rate != src->rate)
+    if (config::value.audio.rate != src->rate)
     {
-      configAudio.rate = src->rate;
-      audio::encoder::setRate(configAudio.rate);
+      config::value.audio.rate = src->rate;
+      audio::encoder::setRate(config::value.audio.rate);
     }
-    if (configAudio.bit != src->bit)
+    if (config::value.audio.bit != src->bit)
     {
-      configAudio.bit = src->bit;
-      audio::encoder::setBit(configAudio.bit);
+      config::value.audio.bit = src->bit;
+      audio::encoder::setBit(config::value.audio.bit);
     }
-    if (configAudio.autoVolumn != src->autoVolumn)
+    if (config::value.audio.autoVolumn != src->autoVolumn)
     {
-      configAudio.autoVolumn = src->autoVolumn;
-      audio::encoder::setGain(configAudio.volumn);
+      config::value.audio.autoVolumn = src->autoVolumn;
+      audio::encoder::setGain(config::value.audio.volumn);
     }
-    if (configAudio.peekVolumn != src->peekVolumn)
+    if (config::value.audio.peekVolumn != src->peekVolumn)
     {
-      configAudio.peekVolumn = src->peekVolumn;
-      audio::encoder::setPeek(configAudio.peekVolumn);
+      config::value.audio.peekVolumn = src->peekVolumn;
+      audio::encoder::setPeek(config::value.audio.peekVolumn);
     }
-    if (configAudio.volumn != src->volumn)
+    if (config::value.audio.volumn != src->volumn)
     {
-      configAudio.volumn = src->volumn;
-      audio::encoder::setAuto(configAudio.autoVolumn);
+      config::value.audio.volumn = src->volumn;
+      audio::encoder::setAuto(config::value.audio.autoVolumn);
     }
-    if (configAudio.start != src->start)
+    if (config::value.audio.start != src->start)
     {
-      configAudio.start = src->start;
-      if (configAudio.start)
+      config::value.audio.start = src->start;
+      if (config::value.audio.start)
       {
-        audio::encoder::setRate(configAudio.rate);
-        audio::encoder::setChannel(configAudio.channel);
-        audio::encoder::setBit(configAudio.bit);
+        audio::encoder::setRate(config::value.audio.rate);
+        audio::encoder::setChannel(config::value.audio.channel);
+        audio::encoder::setBit(config::value.audio.bit);
         audio::encoder::on();
-        audio::encoder::setGain(configAudio.volumn);
-        audio::encoder::setPeek(configAudio.peekVolumn);
-        audio::encoder::setAuto(configAudio.autoVolumn);
+        audio::encoder::setGain(config::value.audio.volumn);
+        audio::encoder::setPeek(config::value.audio.peekVolumn);
+        audio::encoder::setAuto(config::value.audio.autoVolumn);
       }
       else
       {
@@ -777,14 +808,9 @@ static void rf_receive_packet(const uint8_t *data, uint16_t len)
     break;
   }
 
-  // 服务器响应ACK
-  case PACKET_TYPE_SERVER_ACK:
-  {
-    break;
-  }
-
   default:
   {
+    logger::warnln("RF unknow packet type=%d", packet->type);
     break;
   }
   }
@@ -792,34 +818,68 @@ static void rf_receive_packet(const uint8_t *data, uint16_t len)
 
 static void rf_handle(void *arg)
 {
+  // 缓存
+  netbuf *receiveBuffer = NULL;
+  netbuf **sendBuffer = NULL;
+
   TickType_t xLastWakeTime = xTaskGetTickCount();
   const TickType_t xFrequency = pdMS_TO_TICKS(TASK_RF_PERIOD);
   while (true)
   {
     xTaskDelayUntil(&xLastWakeTime, xFrequency);
 
-    if (configDevice.start)
+    /* 处理 BLE 模块 */
+    if (bleIsOpen && bleChannel != NULL)
     {
-      if (configDevice.mode)
+      /* 发送 */
+      if (config::value.device.start && !config::value.device.mode)
       {
-        // WIFI 模式
-        if (wifiIsOpen && socketIsOpen)
+      }
+
+      /* 接收 */
+      while (!bleReceive.empty())
+      {
+        uint8_t *packet = bleReceive.front();
+        // 解析数据包
+        rf_receive_packet(packet);
+        heap_caps_free(packet);
+        bleReceive.pop();
+      }
+    }
+
+    /* 处理 WIFI 模块 */
+    if (wifiIsOpen && socketIsOpen)
+    {
+      /* 发送 */
+      if (config::value.device.start && config::value.device.mode)
+      {
+        uint8_t size = audio::buffer::getWiFiPacketFront(&sendBuffer);
+        for (int part = 0; part < size; part++)
         {
-          netbuf **buf = NULL;
-          uint8_t size = audio::buffer::getWiFiPacketFront(&buf);
-          for (int part = 0; part < size; part++)
-          {
-            socket_send(buf[part]);
-          }
-          free(buf);
+          socket_send(sendBuffer[part]);
+        }
+        if (sendBuffer != NULL)
+        {
+          free(sendBuffer);
+          sendBuffer = NULL;
         }
       }
-      else
+
+      /* 接收 */
+      if (socket_receive(&receiveBuffer))
       {
-        // BLE 模式
-        if (bleIsOpen)
+        uint8_t *data;
+        uint16_t len;
+        do
         {
-        }
+          netbuf_data(receiveBuffer, (void **)&data, &len);
+          data += WIFI_IP_HEAD_LEN;
+          len -= WIFI_IP_HEAD_LEN;
+          // 解析数据包
+          rf_receive_packet(data);
+
+        } while (netbuf_next(receiveBuffer) >= 0);
+        netbuf_delete(receiveBuffer);
       }
     }
   }
@@ -828,6 +888,6 @@ static void rf_handle(void *arg)
 void rf::setup()
 {
   ble_open();
-  // 启动发送线程
+  // 启动发送接收线程
   xTaskCreatePinnedToCore(rf_handle, "rf_handle", TASK_RF_STACK, NULL, TASK_RF_PRIORITY, NULL, TASK_RF_CORE);
 }

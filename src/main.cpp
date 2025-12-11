@@ -1,4 +1,5 @@
 #include "logger.h"
+#include "config.h"
 #include "sys.h"
 #include "module/led.h"
 #include "module/voltage.h"
@@ -14,6 +15,7 @@
 extern "C" void app_main()
 {
   logger::setup();
+  config::setup();
   led::setup();
   led::green();
   sys::setup();
