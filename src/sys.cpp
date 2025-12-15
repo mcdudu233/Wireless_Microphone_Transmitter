@@ -2,6 +2,8 @@
 #include "config.h"
 #include "sys.h"
 
+#include "module/voltage.h"
+
 SystemInfo systemInfo;
 
 /* 每秒定时任务 */
@@ -24,6 +26,10 @@ static void system_handle(void *arg)
   {
     // 精准延时
     xTaskDelayUntil(&xLastWakeTime, xFrequency);
+
+    // 显示电池信息
+    logger::debugln("Battery Information:");
+    logger::debugln("VCC=%F, BAT=%F", voltage::getVCCVoltage(), voltage::getBATVoltage());
 
     // 写入系统信息
     // CPU信息

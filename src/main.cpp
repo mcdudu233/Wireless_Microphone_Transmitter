@@ -2,6 +2,7 @@
 #include "config.h"
 #include "sys.h"
 #include "module/led.h"
+#include "module/power.h"
 #include "module/voltage.h"
 #include "module/audio/power.h"
 #include "module/audio/buffer.h"
@@ -17,7 +18,7 @@ extern "C" void app_main()
   logger::setup();
   config::setup();
   led::setup();
-  led::green();
+  power::setup();
   sys::setup();
   voltage::setup();
   audio::power::setup();
