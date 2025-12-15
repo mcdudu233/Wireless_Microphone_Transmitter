@@ -16,6 +16,9 @@ namespace led
   void blue();
   void rgb(uint8_t r, uint8_t g, uint8_t b);
   void rgb(uint32_t rgb);
+  // 上一个颜色
+  uint32_t getLastColor();
+  void backLastColor();
   // 设置亮度 0~100%
   void brightness(float v);
 }

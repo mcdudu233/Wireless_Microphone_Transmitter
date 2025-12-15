@@ -3,7 +3,8 @@
 
 #include "LiteLED.h"
 
-LiteLED strip(LED_STRIP_WS2812, false);
+static LiteLED strip(LED_STRIP_WS2812, false);
+static rgb_t lastRGB;
 
 void led::setup()
 {
@@ -15,42 +16,53 @@ void led::setup()
 
 void led::black()
 {
-  strip.setPixel(0, 0x000000);
-  strip.show();
+  rgb(0x000000);
 }
 
 void led::red()
 {
-  strip.setPixel(0, 0xff0000);
-  strip.show();
+  rgb(0xff0000);
 }
 
 void led::green()
 {
-  strip.setPixel(0, 0x00ff00);
-  strip.show();
+  rgb(0x00ff00);
 }
 
 void led::blue()
 {
-  strip.setPixel(0, 0x0000ff);
-  strip.show();
+  rgb(0x0000ff);
 }
 
 void led::rgb(uint8_t r, uint8_t g, uint8_t b)
 {
-  strip.setPixel(0, rgb_from_values(r, g, b));
-  strip.show();
+  rgb(rgb_from_values(r, g, b));
 }
 
-void led::rgb(uint32_t rgb)
+void led::rgb(uint32_t color)
+{
+  rgb(rgb_from_code(color));
+}
+
+void led::rgb(rgb_t rgb)
 {
   strip.setPixel(0, rgb);
   strip.show();
+  lastRGB = rgb;
 }
 
 void led::brightness(float v)
 {
   strip.brightness((uint8_t)(v * 255.0 / 100.0));
   strip.show();
+}
+
+uint32_t led::getLastColor()
+{
+  return rgb_to_code(lastRGB);
+}
+
+void led::backLastColor()
+{
+  rgb(lastRGB);
 }
