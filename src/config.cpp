@@ -1,6 +1,7 @@
 #include "logger.h"
 #include "config.h"
 
+#include "nvs_flash.h"
 #include "Preferences.h"
 
 config::StatusValue config::status;
@@ -11,6 +12,32 @@ static Preferences prefs;
 void config::setup()
 {
   logger::debugln("Config is starting...");
+
+  esp_err_t err = nvs_flash_init();
+  if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND)
+  {
+    const esp_partition_t *partition = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_NVS, NULL);
+    if (partition != NULL)
+    {
+      err = esp_partition_erase_range(partition, 0, partition->size);
+      if (!err)
+      {
+        err = nvs_flash_init();
+      }
+      else
+      {
+        logger::warnln("Config failed to format the broken NVS partition!");
+      }
+    }
+    else
+    {
+      logger::warnln("Config could not find NVS partition");
+    }
+  }
+  if (err)
+  {
+    logger::warnln("Config failed to initialize NVS! Error: %u", err);
+  }
 
   prefs.begin(CONFIG_NAME);
 
@@ -35,4 +62,9 @@ void config::setup()
   prefs.getBytes(CONFIG_DATA_NAME, &config, sizeof(ConfigValue));
 
   logger::debugln("Config is started.");
+}
+
+void config::save()
+{
+  prefs.putBytes(CONFIG_DATA_NAME, &config, sizeof(ConfigValue));
 }

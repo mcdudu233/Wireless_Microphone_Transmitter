@@ -72,6 +72,7 @@ static void power_handle(void *arg)
       {
         config::config.battery.isCorrected = true;
         config::config.battery.bias = BATTERY_MAX - power::getBATVoltage();
+        config::save();
         batteryCorrected = true;
         logger::infoln("Battery voltage is corrected.");
       }
@@ -124,8 +125,6 @@ void power::deepSleep()
 
 void power::setup()
 {
-  wakeUp();
-
   // 初始化按钮和充电指示
   pinMode(BUTTON_IO, INPUT_PULLUP);
   pinMode(CHARGING_IO, INPUT);
@@ -135,6 +134,9 @@ void power::setup()
   analogReadResolution(16);
   // 衰减 0~3100mV
   analogSetAttenuation(ADC_11db);
+
+  // 检查唤醒状态
+  wakeUp();
 
   xTaskCreatePinnedToCore(power_handle, "power_handle", TASK_POWER_STACK, NULL, TASK_POWER_PRIORITY, NULL, TASK_POWER_CORE);
 }
