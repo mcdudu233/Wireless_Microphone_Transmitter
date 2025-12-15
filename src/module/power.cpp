@@ -13,6 +13,9 @@ static void power_handle(void *arg)
   unsigned long buttonLastTime;
   uint32_t buttonLastRGB;
 
+  // 电池状态
+  bool batteryCorrected = false;
+
   TickType_t xLastWakeTime = xTaskGetTickCount();
   const TickType_t xFrequency = pdMS_TO_TICKS(TASK_POWER_PERIOD);
   while (true)
@@ -59,6 +62,18 @@ static void power_handle(void *arg)
       {
         buttonDown = false;
         led::rgb(buttonLastRGB);
+      }
+    }
+
+    // 自动校准电池电压
+    if (!batteryCorrected)
+    {
+      if (power::isUSBSupply() && !power::isCharging())
+      {
+        config::config.battery.isCorrected = true;
+        config::config.battery.bias = BATTERY_MAX - power::getBATVoltage();
+        batteryCorrected = true;
+        logger::infoln("Battery voltage is corrected.");
       }
     }
   }
@@ -110,6 +125,66 @@ void power::deepSleep()
 void power::setup()
 {
   wakeUp();
+
+  // 初始化按钮和充电指示
   pinMode(BUTTON_IO, INPUT_PULLUP);
+  pinMode(CHARGING_IO, INPUT);
+
+  // 初始化 ADC
+  // 分辨率
+  analogReadResolution(16);
+  // 衰减 0~3100mV
+  analogSetAttenuation(ADC_11db);
+
   xTaskCreatePinnedToCore(power_handle, "power_handle", TASK_POWER_STACK, NULL, TASK_POWER_PRIORITY, NULL, TASK_POWER_CORE);
+}
+
+double power::getVCCVoltage()
+{
+  return analogReadMilliVolts(ADC_VCC_IO) / 1000.0 * 3.0;
+}
+
+double power::getBATVoltage()
+{
+  return analogReadMilliVolts(ADC_BAT_IO) / 1000.0 * 2.0;
+}
+
+bool power::isUSBSupply()
+{
+  return (getVCCVoltage() > ADC_POWER_SUPPLY);
+}
+
+bool power::isBATSupply()
+{
+  return (getVCCVoltage() <= ADC_POWER_SUPPLY);
+}
+
+bool power::isCharging()
+{
+  return !digitalRead(CHARGING_IO);
+}
+
+double power::getBATPercent()
+{
+  double vol = getBATVoltage();
+  // 如果进行了电压校准
+  if (config::config.battery.isCorrected)
+  {
+    vol += config::config.battery.bias;
+  }
+
+  double percent;
+  if (vol > BATTERY_MAX)
+  {
+    percent = 100.0;
+  }
+  else if (vol < BATTERY_MIN)
+  {
+    percent = 0.0;
+  }
+  else
+  {
+    percent = (vol - BATTERY_MIN) / (BATTERY_MAX - BATTERY_MIN);
+  }
+  return percent;
 }

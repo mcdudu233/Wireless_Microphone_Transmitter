@@ -2,7 +2,7 @@
 #include "config.h"
 #include "sys.h"
 
-#include "module/voltage.h"
+#include "module/power.h"
 
 SystemInfo systemInfo;
 
@@ -29,7 +29,7 @@ static void system_handle(void *arg)
 
     // 显示电池信息
     logger::debugln("Battery Information:");
-    logger::debugln("VCC=%F, BAT=%F", voltage::getVCCVoltage(), voltage::getBATVoltage());
+    logger::debugln("USB_SUPPLY=%d, VCC=%F, BAT=%F, BAT=%F%, BAT_CHARGING=%d", power::isUSBSupply(), power::getVCCVoltage(), power::getBATVoltage(), power::getBATPercent(), power::isCharging());
 
     // 写入系统信息
     // CPU信息
