@@ -36,12 +36,12 @@ void led::blue()
 
 void led::rgb(uint8_t r, uint8_t g, uint8_t b)
 {
-  rgb(rgb_from_values(r, g, b));
+  led::rgb(rgb_from_values(r, g, b));
 }
 
 void led::rgb(uint32_t color)
 {
-  rgb(rgb_from_code(color));
+  led::rgb(rgb_from_code(color));
 }
 
 void led::rgb(rgb_t rgb)

@@ -1,9 +1,10 @@
 #pragma once
 
 #include "stdint.h"
+#include "llrgb.h"
 
 #define LED_NUM 1
-#define LED_IO 48
+#define LED_IO GPIO_NUM_48
 
 namespace led
 {
@@ -15,7 +16,8 @@ namespace led
   void green();
   void blue();
   void rgb(uint8_t r, uint8_t g, uint8_t b);
-  void rgb(uint32_t rgb);
+  void rgb(uint32_t color);
+  void rgb(rgb_t rgb);
   // 上一个颜色
   uint32_t getLastColor();
   void backLastColor();

@@ -4,12 +4,19 @@
 
 // 配置文件名
 #define CONFIG_NAME "config"
-#define CONFIG_VALUE_NAME "config"
+#define CONFIG_DATA_NAME "config"
+#define CONFIG_VERSION_NAME "version"
+#define CONFIG_VERSION_VALUE 0x0001
 
 #define TASK_SYSTEM_CORE 1
 #define TASK_SYSTEM_PERIOD 1000
 #define TASK_SYSTEM_PRIORITY 1
 #define TASK_SYSTEM_STACK 3072
+
+#define TASK_POWER_CORE 1
+#define TASK_POWER_PERIOD 10
+#define TASK_POWER_PRIORITY 10
+#define TASK_POWER_STACK 3072
 
 #define TASK_AUDIO_ENCODER_CORE 1
 #define TASK_AUDIO_ENCODER_PERIOD 4 // 这里必须和编码器轮询周期一样！
@@ -33,7 +40,7 @@ namespace config
   };
 
   // 全局配置
-  struct ConfigValue
+  struct StatusValue
   {
     // 设备信息
     struct
@@ -57,7 +64,18 @@ namespace config
       uint8_t volumn = 0;
     } audio;
   };
-  extern ConfigValue value;
+  extern StatusValue status;
+
+  // 储存的配置
+  struct ConfigValue
+  {
+    struct
+    {
+      bool isCorrected = false;
+      float bias = 0;
+    } battery;
+  };
+  extern ConfigValue config;
 
   void setup();
 }

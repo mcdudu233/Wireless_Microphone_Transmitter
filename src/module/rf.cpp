@@ -708,24 +708,24 @@ static void rf_receive_packet(const uint8_t *data)
   {
     logger::debugln("RF get config control.");
     ServerControlDevicePacket *src = &packet->packet.serverControlDevice;
-    if (config::value.device.mode != src->mode)
+    if (config::status.device.mode != src->mode)
     {
-      config::value.device.mode = src->mode;
+      config::status.device.mode = src->mode;
     }
-    if (strcmp(config::value.device.name, src->name) != 0)
+    if (strcmp(config::status.device.name, src->name) != 0)
     {
-      strcpy(config::value.device.name, src->name);
+      strcpy(config::status.device.name, src->name);
     }
-    if (strcmp(config::value.device.password, src->password) != 0)
+    if (strcmp(config::status.device.password, src->password) != 0)
     {
-      strcpy(config::value.device.password, src->password);
+      strcpy(config::status.device.password, src->password);
     }
-    if (config::value.device.startWiFi != src->startWiFi)
+    if (config::status.device.startWiFi != src->startWiFi)
     {
-      config::value.device.startWiFi = src->startWiFi;
-      if (config::value.device.startWiFi)
+      config::status.device.startWiFi = src->startWiFi;
+      if (config::status.device.startWiFi)
       {
-        wifi_open(config::value.device.name, config::value.device.password);
+        wifi_open(config::status.device.name, config::status.device.password);
       }
       else
       {
@@ -733,10 +733,10 @@ static void rf_receive_packet(const uint8_t *data)
       }
     }
     logger::debugln("startble = %d", src->startBLE);
-    if (config::value.device.startBLE != src->startBLE)
+    if (config::status.device.startBLE != src->startBLE)
     {
-      config::value.device.startBLE = src->startBLE;
-      if (config::value.device.startBLE)
+      config::status.device.startBLE = src->startBLE;
+      if (config::status.device.startBLE)
       {
         ble_open();
       }
@@ -745,9 +745,9 @@ static void rf_receive_packet(const uint8_t *data)
         ble_close();
       }
     }
-    if (config::value.device.start != src->start)
+    if (config::status.device.start != src->start)
     {
-      config::value.device.start = src->start;
+      config::status.device.start = src->start;
     }
     break;
   }
@@ -757,48 +757,48 @@ static void rf_receive_packet(const uint8_t *data)
   {
     logger::debugln("BLE get audio control.");
     ServerControlAudioPacket *src = &packet->packet.serverControlAudio;
-    if (config::value.audio.channel != src->channel)
+    if (config::status.audio.channel != src->channel)
     {
-      config::value.audio.channel = src->channel;
-      audio::encoder::setChannel(config::value.audio.channel);
+      config::status.audio.channel = src->channel;
+      audio::encoder::setChannel(config::status.audio.channel);
     }
-    if (config::value.audio.rate != src->rate)
+    if (config::status.audio.rate != src->rate)
     {
-      config::value.audio.rate = src->rate;
-      audio::encoder::setRate(config::value.audio.rate);
+      config::status.audio.rate = src->rate;
+      audio::encoder::setRate(config::status.audio.rate);
     }
-    if (config::value.audio.bit != src->bit)
+    if (config::status.audio.bit != src->bit)
     {
-      config::value.audio.bit = src->bit;
-      audio::encoder::setBit(config::value.audio.bit);
+      config::status.audio.bit = src->bit;
+      audio::encoder::setBit(config::status.audio.bit);
     }
-    if (config::value.audio.autoVolumn != src->autoVolumn)
+    if (config::status.audio.autoVolumn != src->autoVolumn)
     {
-      config::value.audio.autoVolumn = src->autoVolumn;
-      audio::encoder::setGain(config::value.audio.volumn);
+      config::status.audio.autoVolumn = src->autoVolumn;
+      audio::encoder::setGain(config::status.audio.volumn);
     }
-    if (config::value.audio.peekVolumn != src->peekVolumn)
+    if (config::status.audio.peekVolumn != src->peekVolumn)
     {
-      config::value.audio.peekVolumn = src->peekVolumn;
-      audio::encoder::setPeek(config::value.audio.peekVolumn);
+      config::status.audio.peekVolumn = src->peekVolumn;
+      audio::encoder::setPeek(config::status.audio.peekVolumn);
     }
-    if (config::value.audio.volumn != src->volumn)
+    if (config::status.audio.volumn != src->volumn)
     {
-      config::value.audio.volumn = src->volumn;
-      audio::encoder::setAuto(config::value.audio.autoVolumn);
+      config::status.audio.volumn = src->volumn;
+      audio::encoder::setAuto(config::status.audio.autoVolumn);
     }
-    if (config::value.audio.start != src->start)
+    if (config::status.audio.start != src->start)
     {
-      config::value.audio.start = src->start;
-      if (config::value.audio.start)
+      config::status.audio.start = src->start;
+      if (config::status.audio.start)
       {
-        audio::encoder::setRate(config::value.audio.rate);
-        audio::encoder::setChannel(config::value.audio.channel);
-        audio::encoder::setBit(config::value.audio.bit);
+        audio::encoder::setRate(config::status.audio.rate);
+        audio::encoder::setChannel(config::status.audio.channel);
+        audio::encoder::setBit(config::status.audio.bit);
         audio::encoder::on();
-        audio::encoder::setGain(config::value.audio.volumn);
-        audio::encoder::setPeek(config::value.audio.peekVolumn);
-        audio::encoder::setAuto(config::value.audio.autoVolumn);
+        audio::encoder::setGain(config::status.audio.volumn);
+        audio::encoder::setPeek(config::status.audio.peekVolumn);
+        audio::encoder::setAuto(config::status.audio.autoVolumn);
       }
       else
       {
@@ -832,7 +832,7 @@ static void rf_handle(void *arg)
     if (bleIsOpen && bleChannel != NULL)
     {
       /* 发送 */
-      if (config::value.device.start && !config::value.device.mode)
+      if (config::status.device.start && !config::status.device.mode)
       {
       }
 
@@ -851,7 +851,7 @@ static void rf_handle(void *arg)
     if (wifiIsOpen && socketIsOpen)
     {
       /* 发送 */
-      if (config::value.device.start && config::value.device.mode)
+      if (config::status.device.start && config::status.device.mode)
       {
         uint8_t size = audio::buffer::getWiFiPacketFront(&sendBuffer);
         for (int part = 0; part < size; part++)
