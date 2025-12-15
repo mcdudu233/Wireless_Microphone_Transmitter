@@ -93,18 +93,37 @@ static void wakeUp()
 
   case ESP_SLEEP_WAKEUP_EXT0:
   {
+    if (power::isBATSupply())
+    {
+      // 检测电量是否充足
+      if (power::getBATPercent() <= BATTERY_LOW_PERCENT)
+      {
+        for (uint8_t i = 0; i < 2; i++)
+        {
+          led::black();
+          delay(100);
+          led::red();
+          delay(100);
+        }
+        led::black();
+        power::deepSleep();
+      }
+    }
     logger::debugln("Power wake up from button.");
     break;
   }
 
   case ESP_SLEEP_WAKEUP_UNDEFINED:
   {
+    led::green();
     logger::debugln("Power is normal started.");
     break;
   }
 
   default:
   {
+    led::red();
+    delay(3000);
     logger::debugln("Power unknow wake up for %d.", esp_sleep_get_wakeup_cause());
     break;
   }
@@ -178,7 +197,7 @@ double power::getBATPercent()
   double percent;
   if (vol > BATTERY_MAX)
   {
-    percent = 100.0;
+    percent = 1.0;
   }
   else if (vol < BATTERY_MIN)
   {
@@ -188,5 +207,5 @@ double power::getBATPercent()
   {
     percent = (vol - BATTERY_MIN) / (BATTERY_MAX - BATTERY_MIN);
   }
-  return percent;
+  return percent * 100.0;
 }

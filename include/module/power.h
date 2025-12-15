@@ -4,8 +4,9 @@
 #define BUTTON_SHUTDOWN_TIME (2 * 1000) // 长按3秒钟关机
 
 #define CHARGING_IO GPIO_NUM_8
-#define BATTERY_MAX 4.2 // 电池最高电压
-#define BATTERY_MIN 3.6 // 电池最低电压
+#define BATTERY_MAX 4.2         // 电池最高电压
+#define BATTERY_MIN 3.6         // 电池最低电压
+#define BATTERY_LOW_PERCENT 3.0 // 电量过低百分比
 
 #define ADC_BAT_IO GPIO_NUM_1
 #define ADC_VCC_IO GPIO_NUM_4
