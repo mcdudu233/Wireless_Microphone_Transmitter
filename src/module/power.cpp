@@ -14,7 +14,16 @@ static void power_handle(void *arg)
   uint32_t buttonLastRGB;
 
   // 电池状态
+  bool batterySupply = false;
+  bool batteryCharging = false;
+  double batteryPercent = 0.0;
   bool batteryCorrected = false;
+  bool batteryNotify = false;
+  uint32_t batteryNotifyLastRGB;
+  bool batteryAlert = false;
+  uint32_t batteryAlertLastRGB;
+  uint8_t batteryAlertNumber = 0;
+  bool batteryAlertBool = 0;
 
   TickType_t xLastWakeTime = xTaskGetTickCount();
   const TickType_t xFrequency = pdMS_TO_TICKS(TASK_POWER_PERIOD);
@@ -30,15 +39,6 @@ static void power_handle(void *arg)
         unsigned long now = millis();
         if (now - buttonLastTime > BUTTON_SHUTDOWN_TIME)
         {
-          // 闪烁提示并深睡
-          for (uint8_t i = 0; i < 3; i++)
-          {
-            led::black();
-            delay(100);
-            led::red();
-            delay(100);
-          }
-          led::black();
           power::deepSleep();
         }
         else
@@ -65,16 +65,100 @@ static void power_handle(void *arg)
       }
     }
 
+    // 更新电池信息
+    batterySupply = power::isBATSupply();
+    batteryCharging = power::isCharging();
+    double nowBatteryPercent = power::getBATPercent();
+    if (nowBatteryPercent < batteryPercent)
+    {
+      batteryPercent = nowBatteryPercent;
+    }
+
     // 自动校准电池电压
     if (!batteryCorrected)
     {
-      if (power::isUSBSupply() && !power::isCharging())
+      if (!batterySupply && !batteryCharging)
       {
         config::config.battery.isCorrected = true;
         config::config.battery.bias = BATTERY_MAX - power::getBATVoltage();
         config::save();
         batteryCorrected = true;
         logger::infoln("Battery voltage is corrected.");
+      }
+    }
+
+    // 电量过低提示或者关机
+    if (batterySupply && !batteryCharging)
+    {
+      if (batteryPercent <= BATTERY_LOW_PERCENT)
+      {
+        // 太低关机
+        power::deepSleep();
+      }
+      else if (batteryPercent <= BATTERY_ALERT_LOW_PERCENT)
+      {
+        // 太低警告
+        if (batteryAlert)
+        {
+          led::rgb(batteryAlertNumber, 0, 0);
+          if (batteryAlertBool)
+          {
+            batteryAlertNumber += BATTERY_ALERT_LOW_FREQUENCY;
+            if (batteryAlertNumber == 0xFF)
+            {
+              batteryAlertBool = false;
+            }
+          }
+          else
+          {
+            batteryAlertNumber -= BATTERY_ALERT_LOW_FREQUENCY;
+            if (batteryAlertNumber == 0x00)
+            {
+              batteryAlertBool = true;
+            }
+          }
+        }
+        else
+        {
+          batteryAlertBool = true;
+          batteryAlertNumber = 0x00;
+          batteryAlert = true;
+        }
+      }
+      else if (batteryPercent <= BATTERY_NOTIFY_LOW_PERCENT)
+      {
+        // 太低提示
+        if (!batteryNotify)
+        {
+          led::red();
+          batteryNotify = true;
+        }
+      }
+      else
+      {
+        if (batteryAlert)
+        {
+          led::rgb(batteryAlertLastRGB);
+          batteryAlert = false;
+        }
+        if (batteryNotify)
+        {
+          led::rgb(batteryNotifyLastRGB);
+          batteryNotify = false;
+        }
+      }
+    }
+    else
+    {
+      if (batteryAlert)
+      {
+        led::rgb(batteryAlertLastRGB);
+        batteryAlert = false;
+      }
+      if (batteryNotify)
+      {
+        led::rgb(batteryNotifyLastRGB);
+        batteryNotify = false;
       }
     }
   }
@@ -95,6 +179,19 @@ static void wakeUp()
   {
     if (power::isBATSupply())
     {
+      for (uint16_t i = 0; i < BUTTON_POWERON_TIME; i++)
+      {
+        if (digitalRead(BUTTON_IO) == LOW)
+        {
+          uint8_t tmp = (i * 1.0 / BUTTON_POWERON_TIME) * 255;
+          led::rgb(0, tmp, 0);
+        }
+        else
+        {
+          power::deepSleep(false);
+        }
+        delay(1);
+      }
       // 检测电量是否充足
       if (power::getBATPercent() <= BATTERY_LOW_PERCENT)
       {
@@ -109,6 +206,7 @@ static void wakeUp()
         power::deepSleep();
       }
     }
+    led::green();
     logger::debugln("Power wake up from button.");
     break;
   }
@@ -130,14 +228,29 @@ static void wakeUp()
   }
 }
 
-void power::deepSleep()
+void power::deepSleep(bool withLight)
 {
+  if (withLight)
+  {
+    // 闪烁提示并深睡
+    for (uint8_t i = 0; i < 3; i++)
+    {
+      led::black();
+      delay(100);
+      led::red();
+      delay(100);
+    }
+    led::black();
+  }
+
   // 设置按钮触发唤醒
   esp_sleep_enable_ext0_wakeup(BUTTON_IO, LOW);
   // 拉高引脚
   rtc_gpio_pulldown_dis(BUTTON_IO);
   rtc_gpio_pullup_en(BUTTON_IO);
 
+  // 等待一会 防止马上唤醒
+  delay(BUTTON_WAIT_TIME);
   // 开始深睡
   esp_deep_sleep_start();
 }
