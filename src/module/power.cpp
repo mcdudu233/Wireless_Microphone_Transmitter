@@ -16,7 +16,7 @@ static void power_handle(void *arg)
   // 电池状态
   bool batterySupply = false;
   bool batteryCharging = false;
-  double batteryPercent = 0.0;
+  double batteryPercent = 100.0;
   bool batteryCorrected = false;
   bool batteryNotify = false;
   uint32_t batteryNotifyLastRGB;
@@ -24,6 +24,9 @@ static void power_handle(void *arg)
   uint32_t batteryAlertLastRGB;
   uint8_t batteryAlertNumber = 0;
   bool batteryAlertBool = 0;
+
+  // 等待一会才启动
+  delay(1000);
 
   TickType_t xLastWakeTime = xTaskGetTickCount();
   const TickType_t xFrequency = pdMS_TO_TICKS(TASK_POWER_PERIOD);
@@ -179,19 +182,6 @@ static void wakeUp()
   {
     if (power::isBATSupply())
     {
-      for (uint16_t i = 0; i < BUTTON_POWERON_TIME; i++)
-      {
-        if (digitalRead(BUTTON_IO) == LOW)
-        {
-          uint8_t tmp = (i * 1.0 / BUTTON_POWERON_TIME) * 255;
-          led::rgb(0, tmp, 0);
-        }
-        else
-        {
-          power::deepSleep(false);
-        }
-        delay(1);
-      }
       // 检测电量是否充足
       if (power::getBATPercent() <= BATTERY_LOW_PERCENT)
       {
@@ -205,6 +195,29 @@ static void wakeUp()
         led::black();
         power::deepSleep();
       }
+    }
+    // 长按才能启动
+    for (uint16_t i = 0; i < BUTTON_POWERON_TIME; i++)
+    {
+      if (digitalRead(BUTTON_IO) == LOW)
+      {
+        uint8_t tmp = (i * 1.0 / BUTTON_POWERON_TIME) * 255;
+        led::rgb(0, tmp, 0);
+      }
+      else
+      {
+        led::black();
+        power::deepSleep(false);
+      }
+      delay(1);
+    }
+    // 闪烁提示并深睡
+    for (uint8_t i = 0; i < 2; i++)
+    {
+      led::black();
+      delay(100);
+      led::green();
+      delay(100);
     }
     led::green();
     logger::debugln("Power wake up from button.");
@@ -233,7 +246,7 @@ void power::deepSleep(bool withLight)
   if (withLight)
   {
     // 闪烁提示并深睡
-    for (uint8_t i = 0; i < 3; i++)
+    for (uint8_t i = 0; i < 2; i++)
     {
       led::black();
       delay(100);
@@ -259,7 +272,7 @@ void power::setup()
 {
   // 初始化按钮和充电指示
   pinMode(BUTTON_IO, INPUT_PULLUP);
-  pinMode(CHARGING_IO, INPUT);
+  pinMode(CHARGING_IO, INPUT_PULLUP);
 
   // 初始化 ADC
   // 分辨率
