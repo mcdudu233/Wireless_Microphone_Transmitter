@@ -38,7 +38,7 @@ struct __attribute__((packed)) ServerControlAudioPacket
 {
   bool start = false;
   uint8_t channel = 2;
-  uint16_t rate = 48000;
+  uint32_t rate = 48000;
   uint8_t bit = 16;
   bool autoVolumn = false;
   bool peekVolumn = false;

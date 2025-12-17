@@ -94,7 +94,15 @@ static void audioHandle(void *arg)
         size_t sample_num = size * 8 / AUDIO_ENCODER_BIT / AUDIO_ENCODER_CHANNEL;
         bool in_data1 = true;
         // 增益
-        if (!i2s_peek)
+        if (i2s_auto)
+        {
+          // 自动增益过程
+          // for (uint16_t i = 0; i < size; i += AUDIO_ENCODER_BIT)
+          // {
+          //   i2s_data1;
+          // }
+        }
+        else if (!i2s_peek)
         {
           esp_ae_alc_set_gain(alc_handle, 0, i2s_gain);
           esp_ae_alc_set_gain(alc_handle, 1, i2s_gain);
@@ -116,7 +124,10 @@ static void audioHandle(void *arg)
           if ((in_data1 ? esp_ae_ch_cvt_process(ch_cvt_handle, sample_num, i2s_data1, i2s_data2)
                         : esp_ae_ch_cvt_process(ch_cvt_handle, sample_num, i2s_data2, i2s_data1)) == ESP_OK)
           {
+
             in_data1 = in_data1 ? false : true;
+            size *= i2s_channel;
+            size /= AUDIO_ENCODER_CHANNEL;
           }
           else
           {
@@ -130,6 +141,8 @@ static void audioHandle(void *arg)
                         : esp_ae_bit_cvt_process(bit_cvt_handle, sample_num, i2s_data2, i2s_data1)) == ESP_OK)
           {
             in_data1 = in_data1 ? false : true;
+            size *= i2s_bit;
+            size /= AUDIO_ENCODER_BIT;
           }
           else
           {
@@ -309,6 +322,7 @@ void audio::encoder::setBit(uint32_t bit)
 // 设置自动增益
 void audio::encoder::setAuto(bool on)
 {
+  i2s_auto = on;
 }
 
 // 设置自动降低增益
