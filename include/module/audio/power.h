@@ -1,8 +1,9 @@
 #pragma once
 
-#define AUDIO_POWER_IO 9
+#define AUDIO_POWER_IO GPIO_NUM_9
 
-namespace audio::power{
+namespace audio::power
+{
   void setup();
   void on();
   void off();

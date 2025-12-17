@@ -141,6 +141,8 @@ static const wifi_init_config_t wifiInitConfig = WIFI_INIT_CONFIG_DEFAULT();
 static wifi_config_t wifiConfig;
 
 static bool wifi_close();
+static bool ble_open();
+
 static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
 {
   if (event_base == WIFI_EVENT)
@@ -170,6 +172,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
         {
           // 意外断开连接
           wifi_close();
+          ble_open(); // TODO: 一直重启
         }
         else
         {
@@ -732,7 +735,6 @@ static void rf_receive_packet(const uint8_t *data)
         wifi_close();
       }
     }
-    logger::debugln("startble = %d", src->startBLE);
     if (config::status.device.startBLE != src->startBLE)
     {
       config::status.device.startBLE = src->startBLE;

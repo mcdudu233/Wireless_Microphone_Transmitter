@@ -256,9 +256,17 @@ void power::deepSleep(bool withLight)
     led::black();
   }
 
+  // // 关闭所有无用引脚
+  // for (uint8_t gpio = 0; gpio <= 21; gpio++)
+  // {
+  //   if (gpio != BUTTON_IO)
+  //   {
+  //     rtc_gpio_isolate((gpio_num_t)gpio);
+  //   }
+  // }
+
   // 设置按钮触发唤醒
   esp_sleep_enable_ext0_wakeup(BUTTON_IO, LOW);
-  // 拉高引脚
   rtc_gpio_pulldown_dis(BUTTON_IO);
   rtc_gpio_pullup_en(BUTTON_IO);
 

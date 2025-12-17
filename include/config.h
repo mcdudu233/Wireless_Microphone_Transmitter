@@ -27,10 +27,11 @@
 #define TASK_TUSB_PRIORITY 3
 #define TASK_TUSB_STACK 4096
 
-#define TASK_RF_CORE 1
+#define TASK_RF_CORE 0
 #define TASK_RF_PERIOD 1
 #define TASK_RF_PRIORITY 8
 #define TASK_RF_STACK 3072
+
 namespace config
 {
   enum TransmitMode
