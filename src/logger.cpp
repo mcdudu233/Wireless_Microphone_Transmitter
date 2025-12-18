@@ -62,9 +62,9 @@ void logger::setup()
   Log.setShowLevel(false);
 
   // 初始化串口
-  // Log.begin(LOG_LEVEL_VERBOSE, &USBCDCSerial);
   Serial.begin(115200);
   Log.begin(LOG_LEVEL_VERBOSE, &Serial);
+  // Log.begin(LOG_LEVEL_VERBOSE, &USBCDCSerial);
 
   debugln("Logger is started!");
 }

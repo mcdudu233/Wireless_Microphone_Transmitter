@@ -39,9 +39,9 @@ extern "C"
 // Board Specific Configuration
 //--------------------------------------------------------------------+
 
-// Use High Speed Mode
-#define CFG_TUSB_RHPORT1_MODE OPT_MODE_DEVICE | OPT_MODE_HIGH_SPEED
-#define CONFIG_USB_HS 1
+// Use Full Speed Mode
+#define CFG_TUSB_RHPORT0_MODE OPT_MODE_DEVICE | OPT_MODE_FULL_SPEED
+#define CFG_TUD_MAX_SPEED OPT_MODE_FULL_SPEED
 
 //--------------------------------------------------------------------
 // Common Configuration

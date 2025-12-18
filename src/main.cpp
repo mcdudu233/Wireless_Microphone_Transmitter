@@ -22,7 +22,7 @@ extern "C" void app_main()
   audio::power::setup();
   audio::buffer::setup();
   audio::encoder::setup();
-  // usb::setup();
+  // TODO: usb::setup();
   rf::setup();
 
   logger::infoln("All modules are started now!");
