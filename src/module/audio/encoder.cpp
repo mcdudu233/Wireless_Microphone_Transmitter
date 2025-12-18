@@ -261,7 +261,7 @@ void audio::encoder::on()
           .sample_rate_hz = i2s_rate,
           .clk_src = I2S_CLK_SRC_PLL_160M,
           .ext_clk_freq_hz = 0,
-          .mclk_multiple = I2S_MCLK_MULTIPLE_512,
+          .mclk_multiple = I2S_MCLK_MULTIPLE_256,
           .bclk_div = 0,
       },
       .slot_cfg = i2s_slot_cfg,
