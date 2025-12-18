@@ -40,7 +40,7 @@ static const i2s_std_slot_config_t i2s_slot_cfg = {
     .ws_width = I2S_SLOT_BIT_WIDTH_32BIT,
     .ws_pol = false,
     .bit_shift = true,
-    .left_align = false,
+    .left_align = true,
     .big_endian = false,
     .bit_order_lsb = false};
 
@@ -62,12 +62,31 @@ static esp_ae_ch_cvt_handle_t ch_cvt_handle = NULL;
 
 static bool powerOn = false;
 
+static float dBFromV(float v)
+{
+  return 20.0f * log10f(v);
+}
+
 // 实时处理音频数据
 static int64_t read_len = 0;
 static int64_t read_loss = 0;
 static unsigned long last_time = millis();
 static void audioHandle(void *arg)
 {
+  // 错误
+  esp_err_t ret;
+  // 音频包数据
+  size_t size;
+  size_t sample_num;
+  uint8_t *data;
+  // 自动增益
+  int32_t *auto_data;
+  float auto_gain = 0;
+  const float auto_gain_target = pow10f(AGC_GAIN_TARGET / 20.0f);
+  const float auto_gain_peak = pow10f(AGC_GAIN_PEAK / 20.0f);
+  int32_t auto_peak = 0;
+  uint32_t auto_avg = 0;
+
   TickType_t xLastWakeTime = xTaskGetTickCount();
   const TickType_t xFrequency = pdMS_TO_TICKS(TASK_AUDIO_ENCODER_PERIOD);
   while (true)
@@ -77,8 +96,8 @@ static void audioHandle(void *arg)
     // 启动了芯片才读取数据
     if (powerOn)
     {
-      size_t size = i2s_rate / 1000 * AUDIO_ENCODER_POLLING_CYCLE * AUDIO_ENCODER_BIT / 8 * AUDIO_ENCODER_CHANNEL;
-      esp_err_t ret = i2s_channel_read(i2s_rx_handle, i2s_data1, size, NULL, AUDIO_ENCODER_POLLING_CYCLE * 2);
+      size = i2s_rate / 1000 * AUDIO_ENCODER_POLLING_CYCLE * AUDIO_ENCODER_BIT / 8 * AUDIO_ENCODER_CHANNEL;
+      ret = i2s_channel_read(i2s_rx_handle, i2s_data1, size, NULL, AUDIO_ENCODER_POLLING_CYCLE * 2);
       if (ret == ESP_OK)
       {
         read_len++;
@@ -91,26 +110,62 @@ static void audioHandle(void *arg)
           read_loss = 0;
         }
 
-        size_t sample_num = size * 8 / AUDIO_ENCODER_BIT / AUDIO_ENCODER_CHANNEL;
+        sample_num = size * 8 / AUDIO_ENCODER_BIT / AUDIO_ENCODER_CHANNEL;
         bool in_data1 = true;
         // 增益
-        if (i2s_auto)
-        {
-          // 自动增益过程
-          // for (uint16_t i = 0; i < size; i += AUDIO_ENCODER_BIT)
-          // {
-          //   i2s_data1;
-          // }
-        }
-        else if (!i2s_peek)
-        {
-          esp_ae_alc_set_gain(alc_handle, 0, i2s_gain);
-          esp_ae_alc_set_gain(alc_handle, 1, i2s_gain);
-        }
         if (alc_handle != NULL)
         {
           if (esp_ae_alc_process(alc_handle, sample_num, i2s_data1, i2s_data2) == ESP_OK)
           {
+            if (i2s_auto)
+            {
+              // 自动增益过程
+              auto_data = (int32_t *)i2s_data1;
+              // 计算峰值和平均功率
+              auto_peak = 0;
+              auto_avg = 0;
+              for (uint16_t i = 0; i < sample_num; i++)
+              {
+                int32_t left = abs(auto_data[i * 2]);
+                int32_t right = abs(auto_data[i * 2 + 1]);
+                auto_peak = max(auto_peak, max(left, right));
+                auto_avg += (left + right);
+                auto_avg /= 2;
+              }
+              auto_avg /= 2;
+
+              // 根据RMS电平计算目标增益
+              float target_gain = dBFromV(auto_gain_target / (auto_avg * 1.0f / INT32_MAX));
+              float peak_gain = dBFromV(auto_gain_peak / (auto_peak * 1.0f / INT32_MAX));
+              // 取两者中较小的增益
+              float new_gain = (target_gain < peak_gain) ? target_gain : peak_gain;
+
+              // 限制增益范围
+              if (new_gain > AGC_GAIN_MAX)
+              {
+                new_gain = AGC_GAIN_MAX;
+              }
+              if (new_gain < AGC_GAIN_MIN)
+              {
+                new_gain = AGC_GAIN_MIN;
+              }
+
+              // 平滑调整增益
+              float gain_diff = new_gain - auto_gain;
+              float adjustment_rate = (gain_diff > 0) ? AGC_SPEED_ATTACK : AGC_SPEED_RELEASE;
+              new_gain = auto_gain + adjustment_rate * gain_diff;
+
+              auto_gain = new_gain;
+              esp_ae_alc_set_gain(alc_handle, 0, (int8_t)auto_gain);
+              esp_ae_alc_set_gain(alc_handle, 1, (int8_t)auto_gain);
+            }
+            else if (!i2s_peek)
+            {
+              // 手动设置增益
+              esp_ae_alc_set_gain(alc_handle, 0, i2s_gain);
+              esp_ae_alc_set_gain(alc_handle, 1, i2s_gain);
+            }
+
             in_data1 = false;
           }
           else
@@ -150,7 +205,7 @@ static void audioHandle(void *arg)
           }
         }
         // 送到缓冲里面
-        uint8_t *data = audio::buffer::getWritePointer(size);
+        data = audio::buffer::getWritePointer(size);
         if (in_data1)
         {
           memcpy(data, i2s_data1, size);
@@ -159,9 +214,6 @@ static void audioHandle(void *arg)
         {
           memcpy(data, i2s_data2, size);
         }
-        // int8_t gain;
-        // esp_ae_alc_get_gain(alc_handle, 0, &gain);
-        // printf("gain is %d", gain);
       }
       else if (ret == ESP_ERR_TIMEOUT)
       {
@@ -205,7 +257,13 @@ void audio::encoder::on()
   // 启动 i2s
   i2s_new_channel(&i2s_chan_cfg, NULL, &i2s_rx_handle);
   i2s_std_config_t std_cfg = {
-      .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(i2s_rate),
+      .clk_cfg = {
+          .sample_rate_hz = i2s_rate,
+          .clk_src = I2S_CLK_SRC_PLL_160M,
+          .ext_clk_freq_hz = 0,
+          .mclk_multiple = I2S_MCLK_MULTIPLE_512,
+          .bclk_div = 0,
+      },
       .slot_cfg = i2s_slot_cfg,
       .gpio_cfg = i2s_gpio_cfg,
   };

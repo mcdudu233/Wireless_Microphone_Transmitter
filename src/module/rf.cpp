@@ -798,9 +798,9 @@ static void rf_receive_packet(const uint8_t *data)
         audio::encoder::setChannel(config::status.audio.channel);
         audio::encoder::setBit(config::status.audio.bit);
         audio::encoder::on();
-        audio::encoder::setGain(config::status.audio.volumn);
         audio::encoder::setPeek(config::status.audio.peekVolumn);
         audio::encoder::setAuto(config::status.audio.autoVolumn);
+        audio::encoder::setGain(config::status.audio.volumn);
       }
       else
       {
