@@ -5,7 +5,7 @@
 #define BLE_L2CAP_PSM 0x1001
 #define BLE_L2CAP_MTU 512
 // WiFi
-#define WIFI_RETRY 3
+#define WIFI_RETRY 5
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT BIT1
 #define WIFI_IP_PROTOCOL 0xE9

@@ -5,6 +5,9 @@
 
 #include "driver/rtc_io.h"
 #include "esp_sleep.h"
+#include "esp_system.h"
+#include "soc/soc.h"
+#include "soc/rtc_cntl_reg.h"
 
 static void power_handle(void *arg)
 {
@@ -25,6 +28,9 @@ static void power_handle(void *arg)
   uint8_t batteryAlertNumber = 0;
   bool batteryAlertBool = 0;
 
+  // 待机状态
+  unsigned long waitLastTime = millis();
+
   // 等待一会才启动
   delay(1000);
 
@@ -34,20 +40,26 @@ static void power_handle(void *arg)
   {
     xTaskDelayUntil(&xLastWakeTime, xFrequency);
 
+    // 等待过久没有连接自动进入深睡
+    unsigned long nowTime = millis();
+    if (nowTime - waitLastTime > SLEEP_WAIT_TIME)
+    {
+      power::deepSleep();
+    }
+
     // 长按关机
     if (digitalRead(BUTTON_IO) == LOW)
     {
       if (buttonDown)
       {
-        unsigned long now = millis();
-        if (now - buttonLastTime > BUTTON_SHUTDOWN_TIME)
+        if (nowTime - buttonLastTime > BUTTON_SHUTDOWN_TIME)
         {
           power::deepSleep();
         }
         else
         {
           // 颜色渐亮
-          uint8_t tmp = (uint8_t)((now - buttonLastTime) * 1.0 / BUTTON_SHUTDOWN_TIME * 255);
+          uint8_t tmp = (uint8_t)((nowTime - buttonLastTime) * 1.0 / BUTTON_SHUTDOWN_TIME * 255);
           led::rgb(tmp, 0, 0);
         }
       }
@@ -342,4 +354,16 @@ double power::getBATPercent()
     percent = (vol - BATTERY_MIN) / (BATTERY_MAX - BATTERY_MIN);
   }
   return percent * 100.0;
+}
+
+// 内核复位
+void power::core_restart()
+{
+  REG_WRITE(RTC_CNTL_OPTIONS0_REG, RTC_CNTL_SW_SYS_RST);
+}
+
+// CPU复位
+void power::cpu_restart()
+{
+  esp_restart();
 }

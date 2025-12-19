@@ -68,9 +68,9 @@ static float dBFromV(float v)
 }
 
 // 实时处理音频数据
-static int64_t read_len = 0;
-static int64_t read_loss = 0;
-static unsigned long last_time = millis();
+// static int64_t read_len = 0;
+// static int64_t read_loss = 0;
+// static unsigned long last_time = millis();
 static void audioHandle(void *arg)
 {
   // 错误
@@ -100,15 +100,15 @@ static void audioHandle(void *arg)
       ret = i2s_channel_read(i2s_rx_handle, i2s_data1, size, NULL, AUDIO_ENCODER_POLLING_CYCLE * 2);
       if (ret == ESP_OK)
       {
-        read_len++;
-        if (millis() - last_time >= 1000)
-        {
-          last_time = millis();
-          logger::debugln("%d packets/s", read_len);
-          logger::debugln("lost%d packets/s", read_loss);
-          read_len = 0;
-          read_loss = 0;
-        }
+        // read_len++;
+        // if (millis() - last_time >= 1000)
+        // {
+        //   last_time = millis();
+        //   logger::debugln("%d packets/s", read_len);
+        //   logger::debugln("lost%d packets/s", read_loss);
+        //   read_len = 0;
+        //   read_loss = 0;
+        // }
 
         sample_num = size * 8 / AUDIO_ENCODER_BIT / AUDIO_ENCODER_CHANNEL;
         bool in_data1 = true;
@@ -217,12 +217,12 @@ static void audioHandle(void *arg)
       }
       else if (ret == ESP_ERR_TIMEOUT)
       {
-        read_loss++;
+        // read_loss++;
         logger::warnln("Audio Encoder's I2S read fail! Time out!");
       }
       else
       {
-        read_loss++;
+        // read_loss++;
         logger::warnln("Audio Encoder's I2S read fail! ");
       }
     }
@@ -236,7 +236,7 @@ void audio::encoder::setup()
   i2s_data2 = (uint32_t *)heap_caps_malloc(AUDIO_ENCODER_RATE / 1000 * AUDIO_ENCODER_POLLING_CYCLE * AUDIO_ENCODER_BIT / 8 * AUDIO_ENCODER_CHANNEL, MALLOC_CAP_INTERNAL | MALLOC_CAP_32BIT);
   pinMode(AUDIO_ENCODER_MD0, OUTPUT);
   pinMode(AUDIO_ENCODER_MD1, OUTPUT);
-  digitalWrite(AUDIO_ENCODER_MD0, LOW);
+  digitalWrite(AUDIO_ENCODER_MD0, HIGH);
   digitalWrite(AUDIO_ENCODER_MD1, LOW);
   xTaskCreatePinnedToCore(audioHandle, "audio_encoder_handle", TASK_AUDIO_ENCODER_STACK, NULL, TASK_AUDIO_ENCODER_PRIORITY, NULL, TASK_AUDIO_ENCODER_CORE);
   logger::debugln("Audio Encoder is started!");

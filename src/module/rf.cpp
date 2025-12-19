@@ -2,6 +2,7 @@
 #include "config.h"
 #include "module/rf.h"
 #include "module/led.h"
+#include "module/power.h"
 #include "module/audio/encoder.h"
 #include "module/audio/buffer.h"
 
@@ -170,9 +171,8 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
       {
         if (wifiIsOpen)
         {
-          // 意外断开连接
-          wifi_close();
-          ble_open(); // TODO: 一直重启
+          // TODO: 断开连接直接重启
+          power::core_restart();
         }
         else
         {

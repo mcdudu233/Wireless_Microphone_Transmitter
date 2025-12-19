@@ -18,7 +18,7 @@ extern "C" void app_main()
   config::setup();
   led::setup();
   power::setup();
-  sys::setup();
+  // sys::setup();
   audio::power::setup();
   audio::buffer::setup();
   audio::encoder::setup();
