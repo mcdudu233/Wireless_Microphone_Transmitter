@@ -54,12 +54,10 @@ static void power_handle(void *arg)
       {
         if (nowTime - buttonLastTime > BUTTON_SHUTDOWN_TIME)
         {
-          logger::debugln("sleep");
           power::deepSleep();
         }
         else
         {
-          logger::debugln("waitsleep");
           // 颜色渐亮
           uint8_t tmp = (uint8_t)((nowTime - buttonLastTime) * 1.0 / BUTTON_SHUTDOWN_TIME * 255);
           led::rgb(tmp, 0, 0);
