@@ -6,7 +6,7 @@
 #define CONFIG_NAME "config"
 #define CONFIG_DATA_NAME "config"
 #define CONFIG_VERSION_NAME "version"
-#define CONFIG_VERSION_VALUE 0x0001 // 前两位大版本号 后两位小版本号
+#define CONFIG_VERSION_VALUE 0x0002 // 前两位大版本号 后两位小版本号
 
 #define TASK_SYSTEM_CORE 1
 #define TASK_SYSTEM_PERIOD 1000

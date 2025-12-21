@@ -1,6 +1,6 @@
 #pragma once
 
-#define AUDIO_POWER_IO GPIO_NUM_9
+#define AUDIO_POWER_IO GPIO_NUM_38
 
 namespace audio::power
 {

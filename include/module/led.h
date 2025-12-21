@@ -4,7 +4,7 @@
 #include "llrgb.h"
 
 #define LED_NUM 1
-#define LED_IO GPIO_NUM_48
+#define LED_IO GPIO_NUM_8
 
 namespace led
 {
