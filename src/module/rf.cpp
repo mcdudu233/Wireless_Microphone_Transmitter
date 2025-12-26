@@ -132,6 +132,7 @@ static bool socket_open(uint32_t localIP, uint32_t destIP)
 #include "esp_event.h"
 static bool wifiIsOpen = false;
 static uint8_t wifiRetryTime = 0;
+static uint8_t wifiMAC[6] = {0};
 static uint32_t wifiIP;
 static uint32_t wifiGatewayIP;
 static esp_netif_t *wifiNetIF;
@@ -261,6 +262,7 @@ static bool wifi_open(const char *ssid, const char *password)
    * happened. */
   if (bits & WIFI_CONNECTED_BIT)
   {
+    esp_read_mac(wifiMAC, ESP_MAC_WIFI_STA);
     socket_open(wifiIP, wifiGatewayIP);
     return true;
   }
@@ -283,6 +285,7 @@ static bool wifi_open(const char *ssid, const char *password)
 static bool bleIsOpen = false;
 static bool bleIsClosing = false;
 static bool bleIsAdvertising = false;
+static uint8_t bleMAC[6] = {0};
 static uint16_t bleConnectionHandle = 0;
 static ble_l2cap_chan *bleChannel = NULL;
 // 储存池
@@ -486,6 +489,9 @@ static void ble_on_reset(int reason)
 static void ble_on_sync(void)
 {
   int rc;
+
+  // 获取MAC地址
+  esp_read_mac(bleMAC, ESP_MAC_BT);
 
   // 设置设备名称
   rc = ble_svc_gap_device_name_set(BLE_NAME);
@@ -725,26 +731,37 @@ static void rf_receive_packet(const uint8_t *data)
     }
     if (config::status.device.startWiFi != src->startWiFi)
     {
-      config::status.device.startWiFi = src->startWiFi;
+
       if (config::status.device.startWiFi)
       {
-        wifi_open(config::status.device.name, config::status.device.password);
+        if (wifi_open(config::status.device.name, config::status.device.password))
+        {
+          config::status.device.startWiFi = src->startWiFi;
+        }
       }
       else
       {
-        wifi_close();
+        if (wifi_close())
+        {
+          config::status.device.startWiFi = src->startWiFi;
+        }
       }
     }
     if (config::status.device.startBLE != src->startBLE)
     {
-      config::status.device.startBLE = src->startBLE;
       if (config::status.device.startBLE)
       {
-        ble_open();
+        if (ble_open())
+        {
+          config::status.device.startBLE = src->startBLE;
+        }
       }
       else
       {
-        ble_close();
+        if (ble_close())
+        {
+          config::status.device.startBLE = src->startBLE;
+        }
       }
     }
     if (config::status.device.start != src->start)
@@ -823,6 +840,8 @@ static void rf_handle(void *arg)
   // 缓存
   netbuf *receiveBuffer = NULL;
   netbuf **sendBuffer = NULL;
+  // 定时发送设备状态
+  uint8_t statusNumber = 0;
 
   TickType_t xLastWakeTime = xTaskGetTickCount();
   const TickType_t xFrequency = pdMS_TO_TICKS(TASK_RF_PERIOD);
@@ -865,6 +884,22 @@ static void rf_handle(void *arg)
           free(sendBuffer);
           sendBuffer = NULL;
         }
+      }
+      if (statusNumber++ == RF_CLIENT_STATUS_PERIOD)
+      {
+        // 发送状态包
+        netbuf *buf = netbuf_new();
+        if (buf != NULL)
+        {
+          Packet *packet = (Packet *)netbuf_alloc(buf, PACKET_CLIENT_STATUS_SIZE);
+          packet->type = PACKET_TYPE_CLIENT_STATUS;
+          memcpy(packet->packet.clientStatus.bleMAC, bleMAC, 6);
+          memcpy(packet->packet.clientStatus.wifiMAC, wifiMAC, 6);
+          packet->packet.clientStatus.wifiIP = wifiIP;
+          packet->packet.clientStatus.battery = (uint8_t)power::getBATPercent();
+          socket_send(buf);
+        }
+        statusNumber = 0;
       }
 
       /* 接收 */

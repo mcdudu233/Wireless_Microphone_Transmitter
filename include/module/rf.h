@@ -1,5 +1,8 @@
 #pragma once
 
+// 客户端状态发送频率
+#define RF_CLIENT_STATUS_PERIOD 3000 // ms
+
 // 蓝牙
 #define BLE_NAME "MicTx"
 #define BLE_L2CAP_PSM 0x1001
@@ -14,9 +17,14 @@
 
 // 客户端状态
 #define PACKET_CLIENT_STATUS_SIZE (sizeof(uint8_t) + sizeof(ClientStatusPacket))
+#define PACKET_CLIENT_STATUS_BLE_MAC_NONE 0
+#define PACKET_CLIENT_STATUS_WIFI_MAC_NONE 0
+#define PACKET_CLIENT_STATUS_WIFI_IP_NONE 0x00000000UL
 struct __attribute__((packed)) ClientStatusPacket
 {
-  uint32_t ip = 0x00000000UL;
+  uint8_t bleMAC[6] = {PACKET_CLIENT_STATUS_BLE_MAC_NONE};
+  uint8_t wifiMAC[6] = {PACKET_CLIENT_STATUS_WIFI_MAC_NONE};
+  uint32_t wifiIP = PACKET_CLIENT_STATUS_WIFI_IP_NONE;
   uint8_t battery = 0x00;
 };
 
