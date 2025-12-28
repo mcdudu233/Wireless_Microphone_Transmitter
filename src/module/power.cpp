@@ -265,8 +265,9 @@ void power::deepSleep(bool withLight)
       led::red();
       delay(100);
     }
-    led::black();
   }
+  // 关闭所有灯光
+  led::black();
 
   // // 关闭所有无用引脚
   // for (uint8_t gpio = 0; gpio <= 21; gpio++)
