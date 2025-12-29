@@ -19,12 +19,10 @@
 #define PACKET_CLIENT_STATUS_SIZE (sizeof(uint8_t) + sizeof(ClientStatusPacket))
 #define PACKET_CLIENT_STATUS_BLE_MAC_NONE 0
 #define PACKET_CLIENT_STATUS_WIFI_MAC_NONE 0
-#define PACKET_CLIENT_STATUS_WIFI_IP_NONE 0x00000000UL
 struct __attribute__((packed)) ClientStatusPacket
 {
   uint8_t bleMAC[6] = {PACKET_CLIENT_STATUS_BLE_MAC_NONE};
   uint8_t wifiMAC[6] = {PACKET_CLIENT_STATUS_WIFI_MAC_NONE};
-  uint32_t wifiIP = PACKET_CLIENT_STATUS_WIFI_IP_NONE;
   uint8_t battery = 0x00;
 };
 

@@ -731,8 +731,7 @@ static void rf_receive_packet(const uint8_t *data)
     }
     if (config::status.device.startWiFi != src->startWiFi)
     {
-
-      if (config::status.device.startWiFi)
+      if (src->startWiFi)
       {
         if (wifi_open(config::status.device.name, config::status.device.password))
         {
@@ -749,7 +748,7 @@ static void rf_receive_packet(const uint8_t *data)
     }
     if (config::status.device.startBLE != src->startBLE)
     {
-      if (config::status.device.startBLE)
+      if (src->startBLE)
       {
         if (ble_open())
         {
@@ -895,7 +894,6 @@ static void rf_handle(void *arg)
           packet->type = PACKET_TYPE_CLIENT_STATUS;
           memcpy(packet->packet.clientStatus.bleMAC, bleMAC, 6);
           memcpy(packet->packet.clientStatus.wifiMAC, wifiMAC, 6);
-          packet->packet.clientStatus.wifiIP = wifiIP;
           packet->packet.clientStatus.battery = (uint8_t)power::getBATPercent();
           socket_send(buf);
         }
