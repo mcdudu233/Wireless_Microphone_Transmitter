@@ -1,7 +1,7 @@
 #pragma once
 
 // 客户端状态发送频率
-#define RF_CLIENT_STATUS_PERIOD 3000 // ms
+#define RF_CLIENT_STATUS_PERIOD 1000 // ms
 
 // 蓝牙
 #define BLE_NAME "MicTx"

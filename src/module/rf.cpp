@@ -840,7 +840,7 @@ static void rf_handle(void *arg)
   netbuf *receiveBuffer = NULL;
   netbuf **sendBuffer = NULL;
   // 定时发送设备状态
-  uint8_t statusNumber = 0;
+  uint16_t statusNumber = 0;
 
   TickType_t xLastWakeTime = xTaskGetTickCount();
   const TickType_t xFrequency = pdMS_TO_TICKS(TASK_RF_PERIOD);
