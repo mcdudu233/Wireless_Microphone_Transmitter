@@ -9,9 +9,6 @@
 #include "module/usb/usb.h"
 #include "module/rf.h"
 
-#include "module/usb/usb_device_cdc.h"
-#include "esp_psram.h"
-
 extern "C" void app_main()
 {
   logger::setup();
