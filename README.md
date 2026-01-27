@@ -9,7 +9,7 @@
 本目录下：
 
 - [components](https://github.com/mcdudu233/Wireless_Microphone/blob/main/Transmitter/components) --> 依赖组件目录
-- [config/board.json](https://github.com/mcdudu233/Wireless_Microphone/blob/main/Transmitter/config/board.json) --> 配置目录
+- [config](https://github.com/mcdudu233/Wireless_Microphone/blob/main/Transmitter/config/board.json) --> 配置目录
   - [board.json](https://github.com/mcdudu233/Wireless_Microphone/blob/main/Transmitter/config/board.json) --> 板子配置
   - [partition.csv](https://github.com/mcdudu233/Wireless_Microphone/blob/main/Transmitter/config/partition.csv) --> 分区表配置
 - [include](https://github.com/mcdudu233/Wireless_Microphone/blob/main/Transmitter/include) --> 头文件目录
