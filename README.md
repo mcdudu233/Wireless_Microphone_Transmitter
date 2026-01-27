@@ -8,13 +8,14 @@
 
 本目录下：
 
-- [components](https://github.com/mcdudu233/Wireless_Microphone/blob/main/Transmitter/components) --> 依赖组件
-- [config/board.json](https://github.com/mcdudu233/Wireless_Microphone/blob/main/Transmitter/config/board.json) --> 板子配置
-- [config/partition.csv](https://github.com/mcdudu233/Wireless_Microphone/blob/main/Transmitter/config/partition.csv) --> 分区表配置
-- [include](https://github.com/mcdudu233/Wireless_Microphone/blob/main/Transmitter/include) --> 头文件
-- [src](https://github.com/mcdudu233/Wireless_Microphone/blob/main/Transmitter/src) --> 源代码
-- [test](https://github.com/mcdudu233/Wireless_Microphone/blob/main/Transmitter/test) --> 测试文件 (无)
-- [lib](https://github.com/mcdudu233/Wireless_Microphone/blob/main/Transmitter/lib) --> 库文件 (无)
+- [components](https://github.com/mcdudu233/Wireless_Microphone/blob/main/Transmitter/components) --> 依赖组件目录
+- [config/board.json](https://github.com/mcdudu233/Wireless_Microphone/blob/main/Transmitter/config/board.json) --> 配置目录
+  - [board.json](https://github.com/mcdudu233/Wireless_Microphone/blob/main/Transmitter/config/board.json) --> 板子配置
+  - [partition.csv](https://github.com/mcdudu233/Wireless_Microphone/blob/main/Transmitter/config/partition.csv) --> 分区表配置
+- [include](https://github.com/mcdudu233/Wireless_Microphone/blob/main/Transmitter/include) --> 头文件目录
+- [src](https://github.com/mcdudu233/Wireless_Microphone/blob/main/Transmitter/src) --> 源代码目录
+- [test](https://github.com/mcdudu233/Wireless_Microphone/blob/main/Transmitter/test) --> 测试文件目录 (无)
+- [lib](https://github.com/mcdudu233/Wireless_Microphone/blob/main/Transmitter/lib) --> 库文件目录 (无)
 - [.gitignore](https://github.com/mcdudu233/Wireless_Microphone/blob/main/Transmitter/.gitignore) --> Git 忽略文件
 - [CMakeLists.txt](https://github.com/mcdudu233/Wireless_Microphone/blob/main/Transmitter/CMakeLists.txt) --> CMake 配置文件 (不需要动)
 - [platformio.ini](https://github.com/mcdudu233/Wireless_Microphone/blob/main/Transmitter/platformio.ini) --> PlatformIO 配置文件 (框架, 依赖库, 编译标志)
