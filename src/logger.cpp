@@ -1,4 +1,5 @@
 #include "logger.h"
+#include "module/power.h"
 #include "module/led.h"
 #include "module/usb/usb_device_cdc.h"
 
@@ -20,14 +21,16 @@ void logger::setup()
 
 void logger::error()
 {
-  // 程序遇到了严重错误 暂停所有操作
-  // 闪灯显示错误状态
+  // 程序遇到了严重错误 闪灯显示错误状态
+  uint8_t i = 0;
   led::black();
-  while (true)
+  while (i++ < 10)
   {
     led::rgb(255, 255, 0);
-    delay(500);
+    delay(250);
     led::rgb(255, 0, 0);
-    delay(500);
+    delay(250);
   }
+  // 闪灯后重启系统
+  power::core_restart();
 }
