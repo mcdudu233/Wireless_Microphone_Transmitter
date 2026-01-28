@@ -5,9 +5,10 @@ static bool powerOn = false;
 
 void audio::power::setup()
 {
+  LOGGER_INFO("Audio Power is starting...");
   pinMode(AUDIO_POWER_IO, OUTPUT);
   digitalWrite(AUDIO_POWER_IO, LOW);
-  logger::debugln("Audio Power is started!");
+  LOGGER_INFO("Audio Power is started!");
 }
 
 void audio::power::on()
@@ -16,7 +17,7 @@ void audio::power::on()
   {
     digitalWrite(AUDIO_POWER_IO, HIGH);
     powerOn = true;
-    logger::debugln("Audio Power is on.");
+    LOGGER_INFO("Audio Power is on.");
   }
 }
 
@@ -26,7 +27,7 @@ void audio::power::off()
   {
     digitalWrite(AUDIO_POWER_IO, LOW);
     powerOn = false;
-    logger::debugln("Audio Power is off.");
+    LOGGER_INFO("Audio Power is off.");
   }
 }
 

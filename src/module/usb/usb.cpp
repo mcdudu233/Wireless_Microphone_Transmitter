@@ -57,6 +57,7 @@ static usb_phy_handle_t usb_phy;
 
 void usb::setup()
 {
+  LOGGER_INFO("USB is starting...");
   // 初始化USBOTG
   usb_phy_config_t phy_conf = {
       .controller = USB_PHY_CTRL_OTG,
@@ -67,17 +68,18 @@ void usb::setup()
   esp_err_t ret = usb_new_phy(&phy_conf, &usb_phy);
   if (ret != ESP_OK)
   {
-    logger::warnln("USB PHY init fail!");
+    LOGGER_WARN("USB PHY init fail!");
     return;
   }
 
   // 初始化TUSB
   if (!tusb_init())
   {
-    logger::warnln("USB device stack init fail!");
+    LOGGER_WARN("USB device stack init fail!");
     return;
   }
   xTaskCreatePinnedToCore(tusb_handle, "tusb_handle", TASK_TUSB_STACK, NULL, TASK_TUSB_PRIORITY, &usb_task, TASK_TUSB_CORE);
+  LOGGER_INFO("USB is started!");
 }
 
 void usb::remove()
@@ -86,7 +88,7 @@ void usb::remove()
   vTaskDelete(usb_task);
   if (!tusb_teardown())
   {
-    logger::warnln("USB device stack deinit fail!");
+    LOGGER_WARN("USB device stack deinit fail!");
     return;
   }
 
@@ -94,7 +96,7 @@ void usb::remove()
   esp_err_t ret = usb_del_phy(usb_phy);
   if (ret != ESP_OK)
   {
-    logger::warnln("USB PHY delete fail!");
+    LOGGER_WARN("USB PHY delete fail!");
     return;
   }
   // 切换到下载模式
@@ -108,23 +110,23 @@ void usb::remove()
 // Invoked when device is mounted
 void tud_mount_cb(void)
 {
-  logger::infoln("USB mounted");
+  LOGGER_INFO("USB mounted");
 }
 // Invoked when device is unmounted
 void tud_umount_cb(void)
 {
-  logger::infoln("USB unmounted");
+  LOGGER_INFO("USB unmounted");
 }
 // Invoked when usb bus is suspended
 // remote_wakeup_en : if host allow us to perform remote wakeup
 // Within 7ms, device must draw an average of current less than 2.5 mA from bus
 void tud_suspend_cb(bool remote_wakeup_en)
 {
-  logger::infoln("USB suspended");
+  LOGGER_INFO("USB suspended");
 }
 // Invoked when usb bus is resumed
 void tud_resume_cb(void)
 {
-  logger::infoln("USB resumed");
+  LOGGER_INFO("USB resumed");
 }
 /******************************************/

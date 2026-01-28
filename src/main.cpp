@@ -22,5 +22,5 @@ extern "C" void app_main()
   // TODO: usb::setup();
   rf::setup();
 
-  logger::infoln("All modules are started now!");
+  LOGGER_INFO("All modules are started now!");
 }

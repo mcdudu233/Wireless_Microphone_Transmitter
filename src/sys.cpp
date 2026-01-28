@@ -23,8 +23,8 @@ static void system_handle(void *arg)
 
 #ifdef SYSTEM_PRINT_INFORMATION
     // 显示电池信息
-    logger::debugln("Battery Information:");
-    logger::debugln("USB_SUPPLY=%d, VCC=%F, BAT=%F, BAT=%F%, BAT_CHARGING=%d", power::isUSBSupply(), power::getVCCVoltage(), power::getBATVoltage(), power::getBATPercent(), power::isCharging());
+    LOGGER_INFO("Battery Information:");
+    LOGGER_INFO("USB_SUPPLY=%d, VCC=%F, BAT=%F, BAT=%F%, BAT_CHARGING=%d", power::isUSBSupply(), power::getVCCVoltage(), power::getBATVoltage(), power::getBATPercent(), power::isCharging());
 #endif
 
     // 写入系统信息
@@ -32,15 +32,15 @@ static void system_handle(void *arg)
     tasks_size = uxTaskGetNumberOfTasks();
     tasks = (TaskStatus_t *)malloc(sizeof(TaskStatus_t) * tasks_size);
     tasks_size = uxTaskGetSystemState(tasks, tasks_size, &tasktime);
-    logger::debugln("task=%d", tasktime);
+    LOGGER_INFO("task=%d", tasktime);
 #ifdef SYSTEM_PRINT_INFORMATION
-    logger::debugln("CPU info:\n");
-    logger::debugln("  | Task | Percentage | Stack High |\n");
+    LOGGER_INFO("CPU info:\n");
+    LOGGER_INFO("  | Task | Percentage | Stack High |\n");
 #endif
     for (int i = 0; i < tasks_size; i++)
     {
 #ifdef SYSTEM_PRINT_INFORMATION
-      logger::debugln("  | %s | %F | %d |\n", tasks[i].pcTaskName, tasks[i].ulRunTimeCounter * 100.0 / tasktime, uxTaskGetStackHighWaterMark(tasks[i].xHandle));
+      LOGGER_INFO("  | %s | %F | %d |\n", tasks[i].pcTaskName, tasks[i].ulRunTimeCounter * 100.0 / tasktime, uxTaskGetStackHighWaterMark(tasks[i].xHandle));
 #endif
       // 找到空闲任务
       if (strcmp(tasks[i].pcTaskName, "IDLE0") == 0)
@@ -54,7 +54,7 @@ static void system_handle(void *arg)
     }
     free(tasks);
 #ifdef SYSTEM_PRINT_INFORMATION
-    logger::debugln("  CPU0:%F%, CPU1:%F%\n", systemInfo.cpu0Usage, systemInfo.cpu1Usage);
+    LOGGER_INFO("  CPU0:%F%, CPU1:%F%\n", systemInfo.cpu0Usage, systemInfo.cpu1Usage);
 #endif
 
     // IRAM内存信息
@@ -69,9 +69,9 @@ static void system_handle(void *arg)
     systemInfo.psramTotalSize = systemInfo.psramUsedSize + heapInfo.total_free_bytes;
 
 #ifdef SYSTEM_PRINT_INFORMATION
-    logger::debugln("Memory Info:");
-    logger::debugln("  IRAM: %d/%dKB\n", systemInfo.iramUsedSize / 1024, systemInfo.iramTotalSize / 1024);
-    logger::debugln("  PSRAM: %d/%dKB\n", systemInfo.psramUsedSize / 1024, systemInfo.psramTotalSize / 1024);
+    LOGGER_INFO("Memory Info:");
+    LOGGER_INFO("  IRAM: %d/%dKB\n", systemInfo.iramUsedSize / 1024, systemInfo.iramTotalSize / 1024);
+    LOGGER_INFO("  PSRAM: %d/%dKB\n", systemInfo.psramUsedSize / 1024, systemInfo.psramTotalSize / 1024);
 #endif
   }
 }

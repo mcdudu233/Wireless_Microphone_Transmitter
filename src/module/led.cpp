@@ -8,10 +8,11 @@ static rgb_t lastRGB;
 
 void led::setup()
 {
+  LOGGER_INFO("LED is starting...");
   strip.begin(LED_IO, LED_NUM);
   brightness(50);
   black();
-  logger::debugln("LED is started!");
+  LOGGER_INFO("LED is started!");
 }
 
 void led::black()

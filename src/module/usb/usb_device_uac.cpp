@@ -55,20 +55,20 @@ bool tud_audio_get_req_entity_cb(uint8_t rhport, tusb_control_request_t const *p
             {
             case AUDIO_CS_REQ_CUR:
             {
-                logger::debugln("Clock get current freq %lu\r\n", current_freq);
+                LOGGER_INFO("Clock get current freq %lu\r\n", current_freq);
                 audio_control_cur_4_t curf = {(int32_t)tu_htole32(current_freq)};
                 return tud_audio_buffer_and_schedule_control_xfer(rhport, (tusb_control_request_t const *)request, &curf, sizeof(curf));
             }
             case AUDIO_CS_REQ_RANGE:
             {
                 audio_control_range_4_n_t(SUPPORTED_FREQ_SIZE) rangef = {.wNumSubRanges = tu_htole16(SUPPORTED_FREQ_SIZE)};
-                logger::debugln("Clock get %d freq ranges\r\n", SUPPORTED_FREQ_SIZE);
+                LOGGER_INFO("Clock get %d freq ranges\r\n", SUPPORTED_FREQ_SIZE);
                 for (uint8_t i = 0; i < SUPPORTED_FREQ_SIZE; i++)
                 {
                     rangef.subrange[i].bMin = (int32_t)supported_freq[i];
                     rangef.subrange[i].bMax = (int32_t)supported_freq[i];
                     rangef.subrange[i].bRes = 0;
-                    logger::debugln("Range %d (%d, %d, %d)\r\n", i, (int)rangef.subrange[i].bMin, (int)rangef.subrange[i].bMax, (int)rangef.subrange[i].bRes);
+                    LOGGER_INFO("Range %d (%d, %d, %d)\r\n", i, (int)rangef.subrange[i].bMin, (int)rangef.subrange[i].bMax, (int)rangef.subrange[i].bRes);
                 }
                 return tud_audio_buffer_and_schedule_control_xfer(rhport, (tusb_control_request_t const *)request, &rangef, sizeof(rangef));
             }
@@ -77,12 +77,12 @@ bool tud_audio_get_req_entity_cb(uint8_t rhport, tusb_control_request_t const *p
         case AUDIO_CS_CTRL_CLK_VALID:
         {
             audio_control_cur_1_t cur_valid = {.bCur = 1};
-            logger::debugln("Clock get is valid %u\r\n", cur_valid.bCur);
+            LOGGER_INFO("Clock get is valid %u\r\n", cur_valid.bCur);
             return tud_audio_buffer_and_schedule_control_xfer(rhport, (tusb_control_request_t const *)request, &cur_valid, sizeof(cur_valid));
         }
         default:
         {
-            logger::debugln("Clock get request not supported, entity = %u, selector = %u, request = %u\r\n", request->bEntityID, request->bControlSelector, request->bRequest);
+            LOGGER_INFO("Clock get request not supported, entity = %u, selector = %u, request = %u\r\n", request->bEntityID, request->bControlSelector, request->bRequest);
             return false;
         }
         }
@@ -109,28 +109,28 @@ bool tud_audio_get_req_entity_cb(uint8_t rhport, tusb_control_request_t const *p
                     .subrange = {
                         {.bMin = tu_htole16(-VOLUME_CTRL_50_DB), .bMax = tu_htole16(VOLUME_CTRL_0_DB), .bRes = (256)}},
                 };
-                logger::debugln("Get channel %u volume range (%d, %d, %u) dB\r\n", request->bChannelNumber, range_vol.subrange[0].bMin / 256, range_vol.subrange[0].bMax / 256, range_vol.subrange[0].bRes / 256);
+                LOGGER_INFO("Get channel %u volume range (%d, %d, %u) dB\r\n", request->bChannelNumber, range_vol.subrange[0].bMin / 256, range_vol.subrange[0].bMax / 256, range_vol.subrange[0].bRes / 256);
                 return tud_audio_buffer_and_schedule_control_xfer(rhport, (tusb_control_request_t const *)request, &range_vol, sizeof(range_vol));
             }
             case AUDIO_CS_REQ_CUR:
             {
                 audio_control_cur_2_t cur_vol = {
                     .bCur = tu_htole16(volume[request->bChannelNumber])};
-                logger::debugln("Get channel %u volume %d dB\r\n", request->bChannelNumber, cur_vol.bCur / 256);
+                LOGGER_INFO("Get channel %u volume %d dB\r\n", request->bChannelNumber, cur_vol.bCur / 256);
                 return tud_audio_buffer_and_schedule_control_xfer(rhport, (tusb_control_request_t const *)request, &cur_vol, sizeof(cur_vol));
             }
             }
         }
         default:
         {
-            logger::debugln("Feature unit get request not supported, entity = %u, selector = %u, request = %u\r\n",
+            LOGGER_INFO("Feature unit get request not supported, entity = %u, selector = %u, request = %u\r\n",
                             request->bEntityID, request->bControlSelector, request->bRequest);
             return false;
         }
         }
     }
 
-    logger::debugln("Get request not handled, entity = %d, selector = %d, request = %d\r\n",
+    LOGGER_INFO("Get request not handled, entity = %d, selector = %d, request = %d\r\n",
                     request->bEntityID, request->bControlSelector, request->bRequest);
     return false;
 }
@@ -149,12 +149,12 @@ bool tud_audio_set_req_entity_cb(uint8_t rhport, tusb_control_request_t const *p
         {
             TU_VERIFY(request->wLength == sizeof(audio_control_cur_4_t));
             current_freq = (uint32_t)((audio_control_cur_4_t const *)buf)->bCur;
-            logger::debugln("Clock set current freq: %ld\r\n", current_freq);
+            LOGGER_INFO("Clock set current freq: %ld\r\n", current_freq);
             return true;
         }
         default:
         {
-            logger::debugln("Clock set request not supported, entity = %u, selector = %u, request = %u\r\n",
+            LOGGER_INFO("Clock set request not supported, entity = %u, selector = %u, request = %u\r\n",
                             request->bEntityID, request->bControlSelector, request->bRequest);
             return false;
         }
@@ -170,7 +170,7 @@ bool tud_audio_set_req_entity_cb(uint8_t rhport, tusb_control_request_t const *p
         {
             TU_VERIFY(request->wLength == sizeof(audio_control_cur_1_t));
             mute[request->bChannelNumber] = ((audio_control_cur_1_t const *)buf)->bCur;
-            logger::debugln("Set speaker channel %d Mute: %d\r\n", request->bChannelNumber, mute[request->bChannelNumber]);
+            LOGGER_INFO("Set speaker channel %d Mute: %d\r\n", request->bChannelNumber, mute[request->bChannelNumber]);
             return true;
         }
         case AUDIO_FU_CTRL_VOLUME:
@@ -179,19 +179,19 @@ bool tud_audio_set_req_entity_cb(uint8_t rhport, tusb_control_request_t const *p
             volume[request->bChannelNumber] = ((audio_control_cur_2_t const *)buf)->bCur;
             int volume_db = volume[request->bChannelNumber] / 256; // Convert to dB
             int volume = (volume_db + 50) * 2;                     // Map to range 0 to 100
-            logger::debugln("Set speaker channel %d volume: %d dB (%d)\r\n", request->bChannelNumber, volume_db, volume);
+            LOGGER_INFO("Set speaker channel %d volume: %d dB (%d)\r\n", request->bChannelNumber, volume_db, volume);
             return true;
         }
         default:
         {
-            logger::debugln("Feature unit set request not supported, entity = %u, selector = %u, request = %u\r\n",
+            LOGGER_INFO("Feature unit set request not supported, entity = %u, selector = %u, request = %u\r\n",
                             request->bEntityID, request->bControlSelector, request->bRequest);
             return false;
         }
         }
     }
 
-    logger::debugln("Set request not handled, entity = %d, selector = %d, request = %d\r\n",
+    LOGGER_INFO("Set request not handled, entity = %d, selector = %d, request = %d\r\n",
                     request->bEntityID, request->bControlSelector, request->bRequest);
     return false;
 }
@@ -203,7 +203,7 @@ bool tud_audio_set_itf_cb(uint8_t rhport, tusb_control_request_t const *p_reques
     uint8_t const itf = tu_u16_low(tu_le16toh(p_request->wIndex));
     uint8_t const alt = tu_u16_low(tu_le16toh(p_request->wValue));
 
-    logger::debugln("Set interface %d alt %d\r\n", itf, alt);
+    LOGGER_INFO("Set interface %d alt %d\r\n", itf, alt);
 
     // Clear buffer when streaming format is changed
     if (alt != 0)
@@ -284,7 +284,7 @@ bool tud_audio_set_itf_close_EP_cb(uint8_t rhport, tusb_control_request_t const 
     uint8_t const itf = tu_u16_low(tu_le16toh(p_request->wIndex));
     uint8_t const alt = tu_u16_low(tu_le16toh(p_request->wValue));
 
-    logger::debugln("Microphone interface closed");
+    LOGGER_INFO("Microphone interface closed");
 
     return true;
 }

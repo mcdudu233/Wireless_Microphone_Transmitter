@@ -69,7 +69,7 @@ uint8_t audio::buffer::getWiFiPacketFront(netbuf ***buffers)
     *buffers = (netbuf **)malloc(sizeof(netbuf *) * part_max);
     if (*buffers == NULL)
     {
-      logger::warnln("Socket (netbuf **) malloc failed!");
+      LOGGER_WARN("Socket (netbuf **) malloc failed!");
       return 0;
     }
     // 创建每个包
@@ -99,7 +99,7 @@ uint8_t audio::buffer::getWiFiPacketFront(netbuf ***buffers)
         }
         free(*buffers);
         *buffers = NULL;
-        logger::warnln("Socket netbuf_new() malloc failed!");
+        LOGGER_WARN("Socket netbuf_new() malloc failed!");
         return 0;
       }
       (*buffers)[part] = buffer;
@@ -117,7 +117,7 @@ uint8_t audio::buffer::getWiFiPacketFront(netbuf ***buffers)
         }
         free(*buffers);
         *buffers = NULL;
-        logger::warnln("Socket netbuf_alloc() malloc failed!");
+        LOGGER_WARN("Socket netbuf_alloc() malloc failed!");
         return 0;
       }
       packet->type = PACKET_TYPE_WIFI_AUDIO;
@@ -151,7 +151,8 @@ void audio::buffer::restart()
 
 void audio::buffer::setup()
 {
+  LOGGER_INFO("Audio Buffer is starting...");
   data = (AudioData *)heap_caps_malloc(sizeof(AudioData) * AUDIO_BUFFER_MAX_BUFFER_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_32BIT);
   restart();
-  logger::debugln("Audio Buffer is started.");
+  LOGGER_INFO("Audio Buffer is started!");
 }

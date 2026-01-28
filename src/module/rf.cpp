@@ -24,7 +24,7 @@ static bool socket_send(netbuf *buf)
   err_t err = netconn_sendto(socketSendInstance, buf, &socketDestination, WIFI_NO_PORT);
   if (err != ERR_OK)
   {
-    logger::warnln("Socket send failed: %d", err);
+    LOGGER_WARN("Socket send failed: %d", err);
     return false;
   }
   // 释放
@@ -42,7 +42,7 @@ static bool socket_receive(netbuf **buf)
   }
   else if (err != ERR_OK)
   {
-    logger::warnln("Socket receive failed: %d", err);
+    LOGGER_WARN("Socket receive failed: %d", err);
     return false;
   }
   return true;
@@ -64,7 +64,7 @@ static bool socket_close()
       socketReceiveInstance = NULL;
     }
   }
-  logger::debugln("Socket is shutdown.");
+  LOGGER_INFO("Socket is shutdown.");
   return true;
 }
 
@@ -79,14 +79,14 @@ static bool socket_open(uint32_t localIP, uint32_t destIP)
   socketSendInstance = netconn_new_with_proto_and_callback(NETCONN_RAW, WIFI_IP_PROTOCOL, NULL);
   if (socketSendInstance == NULL)
   {
-    logger::warnln("Socket unable to create:!");
+    LOGGER_WARN("Socket unable to create:!");
     return false;
   }
   socketReceiveInstance = netconn_new_with_proto_and_callback(NETCONN_RAW, WIFI_IP_PROTOCOL, NULL);
   if (socketReceiveInstance == NULL)
   {
     netconn_delete(socketSendInstance);
-    logger::warnln("Socket unable to create:!");
+    LOGGER_WARN("Socket unable to create:!");
     return false;
   }
 
@@ -99,7 +99,7 @@ static bool socket_open(uint32_t localIP, uint32_t destIP)
     socketSendInstance = NULL;
     netconn_delete(socketReceiveInstance);
     socketReceiveInstance = NULL;
-    logger::warnln("Socket netconn bind failed: %d", ret);
+    LOGGER_WARN("Socket netconn bind failed: %d", ret);
     return false;
   }
   ret = netconn_bind(socketReceiveInstance, IP_ADDR_ANY, WIFI_NO_PORT);
@@ -109,7 +109,7 @@ static bool socket_open(uint32_t localIP, uint32_t destIP)
     socketSendInstance = NULL;
     netconn_delete(socketReceiveInstance);
     socketReceiveInstance = NULL;
-    logger::warnln("Socket netconn bind failed: %d", ret);
+    LOGGER_WARN("Socket netconn bind failed: %d", ret);
     return false;
   }
   // 远程地址
@@ -119,7 +119,7 @@ static bool socket_open(uint32_t localIP, uint32_t destIP)
   netconn_set_nonblocking(socketReceiveInstance, true);
 
   socketIsOpen = true;
-  logger::debugln("Socket is started.");
+  LOGGER_INFO("Socket is started.");
   return true;
 }
 /****************************/
@@ -153,20 +153,20 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
     {
       wifiRetryTime = 0;
       esp_wifi_connect();
-      logger::debugln("WiFi is starting to connect.");
+      LOGGER_INFO("WiFi is starting to connect.");
     }
     else if (event_id == WIFI_EVENT_STA_CONNECTED)
     {
-      logger::debugln("WiFi success to connect.");
+      LOGGER_INFO("WiFi success to connect.");
     }
     else if (event_id == WIFI_EVENT_STA_DISCONNECTED)
     {
-      logger::warnln("WiFi failed to connect.");
+      LOGGER_WARN("WiFi failed to connect.");
       if (wifiRetryTime < WIFI_RETRY)
       {
         esp_wifi_connect();
         wifiRetryTime++;
-        logger::warnln("WiFi retry to connect to the AP.");
+        LOGGER_WARN("WiFi retry to connect to the AP.");
       }
       else
       {
@@ -178,7 +178,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
         else
         {
           xEventGroupSetBits(wifiEventGroup, WIFI_FAIL_BIT);
-          logger::warnln("WiFi connect to the AP fail!");
+          LOGGER_WARN("WiFi connect to the AP fail!");
         }
       }
     }
@@ -190,7 +190,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
       ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
       wifiIP = event->ip_info.ip.addr;
       wifiGatewayIP = event->ip_info.gw.addr;
-      logger::debugln("WiFi got ip:" IPSTR, IP2STR(&event->ip_info.ip));
+      LOGGER_INFO("WiFi got ip:" IPSTR, IP2STR(&event->ip_info.ip));
       xEventGroupSetBits(wifiEventGroup, WIFI_CONNECTED_BIT);
     }
     else if (event_id == IP_EVENT_STA_LOST_IP)
@@ -215,7 +215,7 @@ static bool wifi_close()
     wifiNetIF = NULL;
     wifiIsOpen = false;
   }
-  logger::debugln("WiFi is shutdown.");
+  LOGGER_INFO("WiFi is shutdown.");
   return true;
 }
 
@@ -254,9 +254,9 @@ static bool wifi_open(const char *ssid, const char *password)
                                          portMAX_DELAY);
 
   wifiIsOpen = true;
-  logger::debugln("WiFi is started for local IP %d.%d.%d.%d, gateway IP %d.%d.%d.%d.",
-                  ((uint8_t *)&wifiIP)[0], ((uint8_t *)&wifiIP)[1], ((uint8_t *)&wifiIP)[2], ((uint8_t *)&wifiIP)[3],
-                  ((uint8_t *)&wifiGatewayIP)[0], ((uint8_t *)&wifiGatewayIP)[1], ((uint8_t *)&wifiGatewayIP)[2], ((uint8_t *)&wifiGatewayIP)[3]);
+  LOGGER_INFO("WiFi is started for local IP %d.%d.%d.%d, gateway IP %d.%d.%d.%d.",
+              ((uint8_t *)&wifiIP)[0], ((uint8_t *)&wifiIP)[1], ((uint8_t *)&wifiIP)[2], ((uint8_t *)&wifiIP)[3],
+              ((uint8_t *)&wifiGatewayIP)[0], ((uint8_t *)&wifiGatewayIP)[1], ((uint8_t *)&wifiGatewayIP)[2], ((uint8_t *)&wifiGatewayIP)[3]);
 
   /* xEventGroupWaitBits() returns the bits before the call returned, hence we can test which event actually
    * happened. */
@@ -312,18 +312,18 @@ static int ble_l2cap_handler(struct ble_l2cap_event *event, void *arg)
       rc = ble_l2cap_get_chan_info(event->connect.chan, &chan_info);
       if (rc != 0)
       {
-        logger::warnln("Failed to get L2CAP channel info: %d", rc);
+        LOGGER_WARN("Failed to get L2CAP channel info: %d", rc);
         break;
       }
       if (chan_info.psm == BLE_L2CAP_PSM)
       {
         bleChannel = event->connect.chan;
-        logger::debugln("BLE channel connected.");
+        LOGGER_INFO("BLE channel connected.");
       }
     }
     else
     {
-      logger::warnln("BLE L2CAP COC error: %d", event->connect.status);
+      LOGGER_WARN("BLE L2CAP COC error: %d", event->connect.status);
     }
     break;
   }
@@ -335,13 +335,13 @@ static int ble_l2cap_handler(struct ble_l2cap_event *event, void *arg)
     rc = ble_l2cap_get_chan_info(event->disconnect.chan, &chan_info);
     if (rc != 0)
     {
-      logger::warnln("Failed to get L2CAP channel info: %d", rc);
+      LOGGER_WARN("Failed to get L2CAP channel info: %d", rc);
       break;
     }
     if (chan_info.psm == BLE_L2CAP_PSM)
     {
       bleChannel == NULL;
-      logger::debugln("BLE channel disconnected.");
+      LOGGER_INFO("BLE channel disconnected.");
     }
     break;
   }
@@ -353,7 +353,7 @@ static int ble_l2cap_handler(struct ble_l2cap_event *event, void *arg)
     rc = ble_l2cap_get_chan_info(event->accept.chan, &chan_info);
     if (rc != 0)
     {
-      logger::warnln("Failed to get L2CAP channel info: %d", rc);
+      LOGGER_WARN("Failed to get L2CAP channel info: %d", rc);
       break;
     }
     // 接受连接
@@ -361,16 +361,16 @@ static int ble_l2cap_handler(struct ble_l2cap_event *event, void *arg)
     sdu_rx = os_mbuf_get_pkthdr(&bleBufferpool, 0);
     if (!sdu_rx)
     {
-      logger::warnln("BLE L2CAP accept no memory!");
+      LOGGER_WARN("BLE L2CAP accept no memory!");
       break;
     }
     rc = ble_l2cap_recv_ready(event->accept.chan, sdu_rx);
     if (rc != 0)
     {
-      logger::warnln("BLE L2CAP accept failed!");
+      LOGGER_WARN("BLE L2CAP accept failed!");
       break;
     }
-    logger::debugln("BLE L2CAP accept request for psm=%d.", chan_info.psm);
+    LOGGER_INFO("BLE L2CAP accept request for psm=%d.", chan_info.psm);
     break;
   }
 
@@ -385,7 +385,7 @@ static int ble_l2cap_handler(struct ble_l2cap_event *event, void *arg)
       memcpy(packet, event->receive.sdu_rx->om_data, event->receive.sdu_rx->om_len);
       bleReceive.push(packet);
       os_mbuf_free(event->receive.sdu_rx);
-      logger::debugln("BLE received %d bytes on L2CAP channel.", event->receive.sdu_rx->om_len);
+      LOGGER_INFO("BLE received %d bytes on L2CAP channel.", event->receive.sdu_rx->om_len);
     }
 
     // 响应数据 准备接收下一个数据包
@@ -393,13 +393,13 @@ static int ble_l2cap_handler(struct ble_l2cap_event *event, void *arg)
     sdu_rx = os_mbuf_get_pkthdr(&bleBufferpool, 0);
     if (!sdu_rx)
     {
-      logger::warnln("BLE L2CAP accept no memory!");
+      LOGGER_WARN("BLE L2CAP accept no memory!");
       break;
     }
     rc = ble_l2cap_recv_ready(event->receive.chan, sdu_rx);
     if (rc != 0)
     {
-      logger::warnln("BLE L2CAP accept failed!");
+      LOGGER_WARN("BLE L2CAP accept failed!");
       break;
     }
     break;
@@ -430,16 +430,16 @@ static int ble_gap_handler(struct ble_gap_event *event, void *arg)
 
       if (rc != 0)
       {
-        logger::warnln("BLE failed to create config L2CAP server: %d", rc);
+        LOGGER_WARN("BLE failed to create config L2CAP server: %d", rc);
       }
       ble_stop_advertising();
-      logger::debugln("BLE connected, conn_handle: %d", event->connect.conn_handle);
+      LOGGER_INFO("BLE connected, conn_handle: %d", event->connect.conn_handle);
     }
     else
     {
       // 连接失败
       ble_start_advertising();
-      logger::warnln("BLE connected failed! status %d", event->connect.status);
+      LOGGER_WARN("BLE connected failed! status %d", event->connect.status);
     }
     break;
   }
@@ -454,7 +454,7 @@ static int ble_gap_handler(struct ble_gap_event *event, void *arg)
     {
       ble_start_advertising();
     }
-    logger::debugln("BLE disconnected. reason=%d", event->disconnect.reason);
+    LOGGER_INFO("BLE disconnected. reason=%d", event->disconnect.reason);
     break;
   }
 
@@ -463,7 +463,7 @@ static int ble_gap_handler(struct ble_gap_event *event, void *arg)
   {
     // 重新开始广告
     ble_start_advertising();
-    logger::debugln("BLE restart to advertising!");
+    LOGGER_INFO("BLE restart to advertising!");
     break;
   }
 
@@ -478,7 +478,7 @@ static int ble_gap_handler(struct ble_gap_event *event, void *arg)
 // 重置
 static void ble_on_reset(int reason)
 {
-  logger::warnln("BLE reset, reason: %d", reason);
+  LOGGER_WARN("BLE reset, reason: %d", reason);
   ble_stop_advertising();
   bleConnectionHandle = BLE_HS_CONN_HANDLE_NONE;
   bleChannel = NULL;
@@ -497,7 +497,7 @@ static void ble_on_sync(void)
   rc = ble_svc_gap_device_name_set(BLE_NAME);
   if (rc != 0)
   {
-    logger::warnln("BLE set device name failed! reason=%d", rc);
+    LOGGER_WARN("BLE set device name failed! reason=%d", rc);
     return;
   }
 
@@ -507,7 +507,7 @@ static void ble_on_sync(void)
 
 void ble_host_task(void *param)
 {
-  logger::debugln("BLE Host Task Started.");
+  LOGGER_INFO("BLE Host Task Started.");
   /* This function will return only when nimble_port_stop() is executed */
   nimble_port_run();
   nimble_port_freertos_deinit();
@@ -557,7 +557,7 @@ static void ble_start_advertising()
     rc = ble_gap_adv_set_fields(&fields);
     if (rc != 0)
     {
-      logger::warnln("BLE error setting advertisement data! rc=%d\n", rc);
+      LOGGER_WARN("BLE error setting advertisement data! rc=%d\n", rc);
       return;
     }
 
@@ -570,7 +570,7 @@ static void ble_start_advertising()
     rc = ble_gap_adv_start(BLE_OWN_ADDR_PUBLIC, NULL, BLE_HS_FOREVER, &adv_params, ble_gap_handler, NULL);
     if (rc != 0)
     {
-      logger::warnln("BLE error enabling advertisement! rc=%d\n", rc);
+      LOGGER_WARN("BLE error enabling advertisement! rc=%d\n", rc);
       return;
     }
 
@@ -591,7 +591,7 @@ static bool ble_close()
     nimble_port_stop();
     if (rc != 0)
     {
-      logger::warnln("NimBLE stop failed: %d", rc);
+      LOGGER_WARN("NimBLE stop failed: %d", rc);
       bleIsClosing = false;
       return false;
     }
@@ -599,7 +599,7 @@ static bool ble_close()
     rc = nimble_port_deinit();
     if (rc != 0)
     {
-      logger::warnln("NimBLE deinit failed: %d", rc);
+      LOGGER_WARN("NimBLE deinit failed: %d", rc);
       bleIsClosing = false;
       return false;
     }
@@ -608,7 +608,7 @@ static bool ble_close()
     rc = os_mempool_clear(&bleMemoryPool);
     if (rc != OS_OK)
     {
-      logger::warnln("NimBLE os_mempool_clear failed: %d", rc);
+      LOGGER_WARN("NimBLE os_mempool_clear failed: %d", rc);
       bleIsClosing = false;
       return false;
     }
@@ -619,7 +619,7 @@ static bool ble_close()
     bleIsOpen = false;
   }
   bleIsClosing = false;
-  logger::debugln("BLE is close.");
+  LOGGER_INFO("BLE is close.");
   return true;
 }
 
@@ -634,7 +634,7 @@ static bool ble_open()
   esp_err_t ret = nimble_port_init();
   if (ret != ESP_OK)
   {
-    logger::warnln("BLE port init failed: %d", ret);
+    LOGGER_WARN("BLE port init failed: %d", ret);
     return false;
   }
 
@@ -647,13 +647,13 @@ static bool ble_open()
   ret = os_mempool_init(&bleMemoryPool, BLE_L2CAP_COC_BUF_COUNT, BLE_L2CAP_MTU, bleMemory, "coc_sdu_pool");
   if (ret != 0)
   {
-    logger::warnln("BLE os_mempool_init failed: %d", ret);
+    LOGGER_WARN("BLE os_mempool_init failed: %d", ret);
     return false;
   }
   ret = os_mbuf_pool_init(&bleBufferpool, &bleMemoryPool, BLE_L2CAP_MTU, BLE_L2CAP_COC_BUF_COUNT);
   if (ret != 0)
   {
-    logger::warnln("BLE os_mbuf_pool_init failed: %d", ret);
+    LOGGER_WARN("BLE os_mbuf_pool_init failed: %d", ret);
     return false;
   }
 
@@ -661,7 +661,7 @@ static bool ble_open()
   nimble_port_freertos_init(ble_host_task);
 
   bleIsOpen = true;
-  logger::debugln("BLE is started.");
+  LOGGER_INFO("BLE is started.");
   return true;
 }
 
@@ -670,32 +670,32 @@ bool ble_send(const uint8_t *data, uint16_t len)
 {
   if (!bleIsOpen || !bleChannel)
   {
-    logger::warnln("BLE channel not ready.");
+    LOGGER_WARN("BLE channel not ready.");
     return false;
   }
 
   if (len > BLE_L2CAP_MTU)
   {
-    logger::warnln("BLE data too large for L2CAP MTU.");
+    LOGGER_WARN("BLE data too large for L2CAP MTU.");
     return false;
   }
 
   struct os_mbuf *om = ble_hs_mbuf_from_flat(data, len);
   if (!om)
   {
-    logger::warnln("BLE failed to allocate mbuf.");
+    LOGGER_WARN("BLE failed to allocate mbuf.");
     return false;
   }
 
   int rc = ble_l2cap_send(bleChannel, om);
   if (rc != 0)
   {
-    logger::warnln("BLE failed to send data: %d", rc);
+    LOGGER_WARN("BLE failed to send data: %d", rc);
     os_mbuf_free_chain(om);
     return false;
   }
 
-  logger::debugln("BLE sent %d bytes.", len);
+  LOGGER_INFO("BLE sent %d bytes.", len);
   return true;
 }
 /****************************/
@@ -715,7 +715,7 @@ static void rf_receive_packet(const uint8_t *data)
   // 配置设备
   case PACKET_TYPE_SERVER_CONTROL_DEVICE:
   {
-    logger::debugln("RF get config control.");
+    LOGGER_INFO("RF get config control.");
     ServerControlDevicePacket *src = &packet->packet.serverControlDevice;
     if (config::status.device.mode != src->mode)
     {
@@ -773,7 +773,7 @@ static void rf_receive_packet(const uint8_t *data)
   // 配置音频
   case PACKET_TYPE_SERVER_CONTROL_AUDIO:
   {
-    logger::debugln("BLE get audio control.");
+    LOGGER_INFO("BLE get audio control.");
     ServerControlAudioPacket *src = &packet->packet.serverControlAudio;
     if (config::status.audio.channel != src->channel)
     {
@@ -828,7 +828,7 @@ static void rf_receive_packet(const uint8_t *data)
 
   default:
   {
-    logger::warnln("RF unknow packet type=%d", packet->type);
+    LOGGER_WARN("RF unknow packet type=%d", packet->type);
     break;
   }
   }
@@ -922,7 +922,9 @@ static void rf_handle(void *arg)
 
 void rf::setup()
 {
+  LOGGER_INFO("Radio Frequency is starting...");
   ble_open();
   // 启动发送接收线程
   xTaskCreatePinnedToCore(rf_handle, "rf_handle", TASK_RF_STACK, NULL, TASK_RF_PRIORITY, NULL, TASK_RF_CORE);
+  LOGGER_INFO("Radio Frequency is started!");
 }

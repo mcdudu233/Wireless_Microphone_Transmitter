@@ -1,7 +1,5 @@
 #pragma once
 
-#include "queue.h"
-
 #define AUDIO_ENCODER_WS GPIO_NUM_17
 #define AUDIO_ENCODER_CLK GPIO_NUM_16
 #define AUDIO_ENCODER_SD GPIO_NUM_15

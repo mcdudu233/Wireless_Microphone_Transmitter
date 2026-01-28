@@ -170,7 +170,7 @@ static void audioHandle(void *arg)
           }
           else
           {
-            logger::warnln("Audio Encoder's ALC process failed!");
+            LOGGER_WARN("Audio Encoder's ALC process failed!");
           }
         }
         // 声道转换
@@ -186,7 +186,7 @@ static void audioHandle(void *arg)
           }
           else
           {
-            logger::warnln("Audio Encoder's channel process failed!");
+            LOGGER_WARN("Audio Encoder's channel process failed!");
           }
         }
         // 比特转换
@@ -201,7 +201,7 @@ static void audioHandle(void *arg)
           }
           else
           {
-            logger::warnln("Audio Encoder's bit process failed!");
+            LOGGER_WARN("Audio Encoder's bit process failed!");
           }
         }
         // 送到缓冲里面
@@ -218,12 +218,12 @@ static void audioHandle(void *arg)
       else if (ret == ESP_ERR_TIMEOUT)
       {
         // read_loss++;
-        logger::warnln("Audio Encoder's I2S read fail! Time out!");
+        LOGGER_WARN("Audio Encoder's I2S read fail! Time out!");
       }
       else
       {
         // read_loss++;
-        logger::warnln("Audio Encoder's I2S read fail! ");
+        LOGGER_WARN("Audio Encoder's I2S read fail! ");
       }
     }
   }
@@ -231,7 +231,7 @@ static void audioHandle(void *arg)
 
 void audio::encoder::setup()
 {
-  logger::debugln("Audio Encoder is starting...");
+  LOGGER_INFO("Audio Encoder is starting...");
   i2s_data1 = (uint32_t *)heap_caps_malloc(AUDIO_ENCODER_RATE / 1000 * AUDIO_ENCODER_POLLING_CYCLE * AUDIO_ENCODER_BIT / 8 * AUDIO_ENCODER_CHANNEL, MALLOC_CAP_INTERNAL | MALLOC_CAP_32BIT);
   i2s_data2 = (uint32_t *)heap_caps_malloc(AUDIO_ENCODER_RATE / 1000 * AUDIO_ENCODER_POLLING_CYCLE * AUDIO_ENCODER_BIT / 8 * AUDIO_ENCODER_CHANNEL, MALLOC_CAP_INTERNAL | MALLOC_CAP_32BIT);
   pinMode(AUDIO_ENCODER_MD0, OUTPUT);
@@ -239,7 +239,7 @@ void audio::encoder::setup()
   digitalWrite(AUDIO_ENCODER_MD0, HIGH);
   digitalWrite(AUDIO_ENCODER_MD1, LOW);
   xTaskCreatePinnedToCore(audioHandle, "audio_encoder_handle", TASK_AUDIO_ENCODER_STACK, NULL, TASK_AUDIO_ENCODER_PRIORITY, NULL, TASK_AUDIO_ENCODER_CORE);
-  logger::debugln("Audio Encoder is started!");
+  LOGGER_INFO("Audio Encoder is started!");
 }
 
 void audio::encoder::on()
@@ -276,7 +276,7 @@ void audio::encoder::on()
       .bits_per_sample = I2S_DATA_BIT_WIDTH_32BIT};
   esp_ae_alc_open(&alc_cfg, &alc_handle);
   powerOn = true;
-  logger::debugln("Audio Encoder is on.");
+  LOGGER_INFO("Audio Encoder is on.");
 }
 
 void audio::encoder::off()
@@ -296,7 +296,7 @@ void audio::encoder::off()
     }
     i2s_channel_disable(i2s_rx_handle);
     i2s_del_channel(i2s_rx_handle);
-    logger::debugln("Audio Encoder is off.");
+    LOGGER_INFO("Audio Encoder is off.");
   }
 }
 

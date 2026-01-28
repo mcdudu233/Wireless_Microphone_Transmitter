@@ -98,7 +98,7 @@ static void power_handle(void *arg)
         config::config.battery.bias = BATTERY_MAX - power::getBATVoltage();
         config::save();
         batteryCorrected = true;
-        logger::infoln("Battery voltage is corrected.");
+        LOGGER_INFO("Battery voltage is corrected.");
       }
     }
 
@@ -186,7 +186,7 @@ static void wakeUp()
   {
   case ESP_SLEEP_WAKEUP_TIMER:
   {
-    logger::debugln("Power wake up from timer.");
+    LOGGER_INFO("Power wake up from timer.");
     break;
   }
 
@@ -232,14 +232,14 @@ static void wakeUp()
       delay(100);
     }
     led::green();
-    logger::debugln("Power wake up from button.");
+    LOGGER_INFO("Power wake up from button.");
     break;
   }
 
   case ESP_SLEEP_WAKEUP_UNDEFINED:
   {
     led::green();
-    logger::debugln("Power is normal started.");
+    LOGGER_INFO("Power is normal started.");
     break;
   }
 
@@ -247,7 +247,7 @@ static void wakeUp()
   {
     led::red();
     delay(3000);
-    logger::debugln("Power unknow wake up for %d.", esp_sleep_get_wakeup_cause());
+    LOGGER_WARN("Power unknow wake up for %d.", esp_sleep_get_wakeup_cause());
     break;
   }
   }
@@ -291,6 +291,7 @@ void power::deepSleep(bool withLight)
 
 void power::setup()
 {
+  LOGGER_INFO("Power is starting...");
   // 初始化按钮和充电指示
   pinMode(BUTTON_IO, INPUT_PULLUP);
   pinMode(CHARGING_IO, INPUT_PULLUP);
@@ -305,6 +306,7 @@ void power::setup()
   wakeUp();
 
   xTaskCreatePinnedToCore(power_handle, "power_handle", TASK_POWER_STACK, NULL, TASK_POWER_PRIORITY, NULL, TASK_POWER_CORE);
+  LOGGER_INFO("Power is started!");
 }
 
 double power::getVCCVoltage()
