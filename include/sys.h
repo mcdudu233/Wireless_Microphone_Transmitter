@@ -8,10 +8,10 @@ struct SystemInfo
 {
   float cpu0Usage;
   float cpu1Usage;
-  uint32_t iramUsedSize;
-  uint32_t iramTotalSize;
-  uint32_t psramUsedSize;
-  uint32_t psramTotalSize;
+  size_t iramUsedSize;
+  size_t iramTotalSize;
+  size_t psramUsedSize;
+  size_t psramTotalSize;
 };
 
 extern SystemInfo systemInfo;

@@ -34,8 +34,8 @@ static void system_handle(void *arg)
     tasks_size = uxTaskGetSystemState(tasks, tasks_size, &tasktime);
     LOGGER_INFO("task=%d", tasktime);
 #ifdef SYSTEM_PRINT_INFORMATION
-    LOGGER_INFO("CPU info:\n");
-    LOGGER_INFO("  | Task | Percentage | Stack High |\n");
+    LOGGER_INFO("CPU info:");
+    LOGGER_INFO("  | Task | Percentage | Stack High |");
 #endif
     for (int i = 0; i < tasks_size; i++)
     {
@@ -54,24 +54,24 @@ static void system_handle(void *arg)
     }
     free(tasks);
 #ifdef SYSTEM_PRINT_INFORMATION
-    LOGGER_INFO("  CPU0:%F%, CPU1:%F%\n", systemInfo.cpu0Usage, systemInfo.cpu1Usage);
+    LOGGER_INFO("  CPU0:%F%, CPU1:%F%", systemInfo.cpu0Usage, systemInfo.cpu1Usage);
 #endif
 
     // IRAM内存信息
     multi_heap_info_t heapInfo;
     heap_caps_get_info(&heapInfo, MALLOC_CAP_INTERNAL);
     systemInfo.iramUsedSize = heapInfo.total_allocated_bytes;
-    systemInfo.iramTotalSize = systemInfo.iramUsedSize + heapInfo.total_free_bytes;
+    systemInfo.iramTotalSize = heapInfo.total_allocated_bytes + heapInfo.total_free_bytes;
 
     // PSRAM内存信息
     heap_caps_get_info(&heapInfo, MALLOC_CAP_SPIRAM);
     systemInfo.psramUsedSize = heapInfo.total_allocated_bytes;
-    systemInfo.psramTotalSize = systemInfo.psramUsedSize + heapInfo.total_free_bytes;
+    systemInfo.psramTotalSize = heapInfo.total_allocated_bytes + heapInfo.total_free_bytes;
 
 #ifdef SYSTEM_PRINT_INFORMATION
     LOGGER_INFO("Memory Info:");
-    LOGGER_INFO("  IRAM: %d/%dKB\n", systemInfo.iramUsedSize / 1024, systemInfo.iramTotalSize / 1024);
-    LOGGER_INFO("  PSRAM: %d/%dKB\n", systemInfo.psramUsedSize / 1024, systemInfo.psramTotalSize / 1024);
+    LOGGER_INFO("  IRAM: %d/%dKB", systemInfo.iramUsedSize / 1024, systemInfo.iramTotalSize / 1024);
+    LOGGER_INFO("  PSRAM: %d/%dKB", systemInfo.psramUsedSize / 1024, systemInfo.psramTotalSize / 1024);
 #endif
   }
 }

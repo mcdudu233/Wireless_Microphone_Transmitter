@@ -3,6 +3,8 @@
 #include "module/led.h"
 #include "module/usb/usb_device_cdc.h"
 
+#include "cstdarg"
+
 void logger::setup()
 {
   // 根据构建类型设置日志级别
@@ -19,7 +21,7 @@ void logger::setup()
   LOGGER_INFO("Logger is started!");
 }
 
-void logger::error()
+void logger::error(char *str)
 {
   // 程序遇到了严重错误 闪灯显示错误状态
   uint8_t i = 0;
