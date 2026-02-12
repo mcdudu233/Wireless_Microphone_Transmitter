@@ -1,5 +1,7 @@
 #pragma once
 
+#include "config.h"
+
 #define AUDIO_ENCODER_WS GPIO_NUM_17
 #define AUDIO_ENCODER_CLK GPIO_NUM_16
 #define AUDIO_ENCODER_SD GPIO_NUM_15
@@ -23,20 +25,14 @@
 namespace audio::encoder
 {
   void setup();
-  void on();
+  void on(AudioChannel channel, AudioRate rate, AudioBit bit, AudioMode mode, AudioGain gain);
   void off();
   bool isOn();
 
-  // rate -> gain -> channel -> bit
-  void setRate(uint32_t rate);
-  void setBit(uint32_t bit);
-  void setChannel(uint8_t channel);
-  // 设置自动增益
-  void setAuto(bool on);
-  // 设置自动降低增益
-  void setPeek(bool on);
+  // 设置增益模式
+  void setMode(AudioMode mode);
   // 设置增益(dB)
-  void setGain(int8_t db);
+  void setGain(AudioGain gain);
 
   // 默认采用 Linear phase filters ，可以设置为 Low latency filters
   void setLowLatencyFilter(bool on);

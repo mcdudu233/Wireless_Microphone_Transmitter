@@ -132,7 +132,6 @@ static bool socket_open(uint32_t localIP, uint32_t destIP)
 #include "esp_event.h"
 static bool wifiIsOpen = false;
 static uint8_t wifiRetryTime = 0;
-static uint8_t wifiMAC[6] = {0};
 static uint32_t wifiIP;
 static uint32_t wifiGatewayIP;
 static esp_netif_t *wifiNetIF;
@@ -262,7 +261,6 @@ static bool wifi_open(const char *ssid, const char *password)
    * happened. */
   if (bits & WIFI_CONNECTED_BIT)
   {
-    esp_read_mac(wifiMAC, ESP_MAC_WIFI_STA);
     socket_open(wifiIP, wifiGatewayIP);
     return true;
   }
@@ -285,7 +283,6 @@ static bool wifi_open(const char *ssid, const char *password)
 static bool bleIsOpen = false;
 static bool bleIsClosing = false;
 static bool bleIsAdvertising = false;
-static uint8_t bleMAC[6] = {0};
 static uint16_t bleConnectionHandle = 0;
 static ble_l2cap_chan *bleChannel = NULL;
 // 储存池
@@ -489,9 +486,6 @@ static void ble_on_reset(int reason)
 static void ble_on_sync(void)
 {
   int rc;
-
-  // 获取MAC地址
-  esp_read_mac(bleMAC, ESP_MAC_BT);
 
   // 设置设备名称
   rc = ble_svc_gap_device_name_set(BLE_NAME);
@@ -716,56 +710,64 @@ static void rf_receive_packet(const uint8_t *data)
   case PACKET_TYPE_SERVER_CONTROL_DEVICE:
   {
     LOGGER_INFO("RF get config control.");
-    ServerControlDevicePacket *src = &packet->packet.serverControlDevice;
-    if (config::status.device.mode != src->mode)
+    ServerControlRFPacket *src = &packet->packet.serverControlRF;
+    // 复制 SSID 和 密码
+    if (strcmp(config::status.rf.ssid, src->ssid) != 0)
     {
-      config::status.device.mode = src->mode;
+      strcpy(config::status.rf.ssid, src->ssid);
     }
-    if (strcmp(config::status.device.name, src->name) != 0)
+    if (strcmp(config::status.rf.password, src->password) != 0)
     {
-      strcpy(config::status.device.name, src->name);
+      strcpy(config::status.rf.password, src->password);
     }
-    if (strcmp(config::status.device.password, src->password) != 0)
+    // 射频模式改变
+    if (config::status.rf.mode != src->mode)
     {
-      strcpy(config::status.device.password, src->password);
-    }
-    if (config::status.device.startWiFi != src->startWiFi)
-    {
-      if (src->startWiFi)
+      // 先关闭原来的射频
+      switch (config::status.rf.mode)
       {
-        if (wifi_open(config::status.device.name, config::status.device.password))
-        {
-          config::status.device.startWiFi = src->startWiFi;
-        }
-      }
-      else
+      case RF_MODE_BLE:
       {
-        if (wifi_close())
+        if (!ble_close())
         {
-          config::status.device.startWiFi = src->startWiFi;
+          // TODO: 失败发送给接收端
+          return;
         }
+        break;
       }
-    }
-    if (config::status.device.startBLE != src->startBLE)
-    {
-      if (src->startBLE)
+      case RF_MODE_WIFI:
       {
-        if (ble_open())
+        if (!wifi_close())
         {
-          config::status.device.startBLE = src->startBLE;
+          // TODO: 失败发送给接收端
+          return;
         }
+        break;
       }
-      else
+      }
+      // 开启新的射频模式
+      switch (src->mode)
       {
-        if (ble_close())
+      case RF_MODE_BLE:
+      {
+        if (!ble_open())
         {
-          config::status.device.startBLE = src->startBLE;
+          // TODO: 失败发送给接收端
+          return;
         }
+        break;
       }
-    }
-    if (config::status.device.start != src->start)
-    {
-      config::status.device.start = src->start;
+      case RF_MODE_WIFI:
+      {
+        if (!wifi_open(config::status.rf.ssid, config::status.rf.password))
+        {
+          // TODO: 失败发送给接收端
+          return;
+        }
+        break;
+      }
+      }
+      config::status.rf.mode = src->mode;
     }
     break;
   }
@@ -777,51 +779,57 @@ static void rf_receive_packet(const uint8_t *data)
     ServerControlAudioPacket *src = &packet->packet.serverControlAudio;
     if (config::status.audio.channel != src->channel)
     {
+      if (audio::encoder::isOn())
+      {
+        audio::encoder::on(src->channel, config::status.audio.rate, config::status.audio.bit, config::status.audio.mode, config::status.audio.gain);
+      }
       config::status.audio.channel = src->channel;
-      audio::encoder::setChannel(config::status.audio.channel);
     }
     if (config::status.audio.rate != src->rate)
     {
+      if (audio::encoder::isOn())
+      {
+        audio::encoder::on(config::status.audio.channel, src->rate, config::status.audio.bit, config::status.audio.mode, config::status.audio.gain);
+      }
       config::status.audio.rate = src->rate;
-      audio::encoder::setRate(config::status.audio.rate);
     }
     if (config::status.audio.bit != src->bit)
     {
+      if (audio::encoder::isOn())
+      {
+        audio::encoder::on(config::status.audio.channel, config::status.audio.rate, src->bit, config::status.audio.mode, config::status.audio.gain);
+      }
       config::status.audio.bit = src->bit;
-      audio::encoder::setBit(config::status.audio.bit);
     }
-    if (config::status.audio.autoVolumn != src->autoVolumn)
+    // 音频模式改变
+    if (config::status.audio.mode != src->mode)
     {
-      config::status.audio.autoVolumn = src->autoVolumn;
-      audio::encoder::setGain(config::status.audio.volumn);
+      if (audio::encoder::isOn())
+      {
+        audio::encoder::setMode(src->mode);
+      }
+      config::status.audio.mode = src->mode;
     }
-    if (config::status.audio.peekVolumn != src->peekVolumn)
+    if (config::status.audio.gain != src->gain)
     {
-      config::status.audio.peekVolumn = src->peekVolumn;
-      audio::encoder::setPeek(config::status.audio.peekVolumn);
+      if (audio::encoder::isOn())
+      {
+        audio::encoder::setGain(src->gain);
+      }
+      config::status.audio.gain = src->gain;
     }
-    if (config::status.audio.volumn != src->volumn)
-    {
-      config::status.audio.volumn = src->volumn;
-      audio::encoder::setAuto(config::status.audio.autoVolumn);
-    }
+    // 打开或者关闭音频传输
     if (config::status.audio.start != src->start)
     {
-      config::status.audio.start = src->start;
-      if (config::status.audio.start)
+      if (src->start)
       {
-        audio::encoder::setRate(config::status.audio.rate);
-        audio::encoder::setChannel(config::status.audio.channel);
-        audio::encoder::setBit(config::status.audio.bit);
-        audio::encoder::on();
-        audio::encoder::setPeek(config::status.audio.peekVolumn);
-        audio::encoder::setAuto(config::status.audio.autoVolumn);
-        audio::encoder::setGain(config::status.audio.volumn);
+        audio::encoder::on(config::status.audio.channel, config::status.audio.rate, config::status.audio.bit, config::status.audio.mode, config::status.audio.gain);
       }
       else
       {
         audio::encoder::off();
       }
+      config::status.audio.start = src->start;
     }
     break;
   }
@@ -848,74 +856,97 @@ static void rf_handle(void *arg)
   {
     xTaskDelayUntil(&xLastWakeTime, xFrequency);
 
-    /* 处理 BLE 模块 */
-    if (bleIsOpen && bleChannel != NULL)
+    // 判断当前射频模式
+    switch (config::status.rf.mode)
     {
-      /* 发送 */
-      if (config::status.device.start && !config::status.device.mode)
-      {
-      }
-
-      /* 接收 */
-      while (!bleReceive.empty())
-      {
-        uint8_t *packet = bleReceive.front();
-        // 解析数据包
-        rf_receive_packet(packet);
-        heap_caps_free(packet);
-        bleReceive.pop();
-      }
-    }
-
-    /* 处理 WIFI 模块 */
-    if (wifiIsOpen && socketIsOpen)
+    case RF_MODE_BLE:
     {
-      /* 发送 */
-      if (config::status.device.start && config::status.device.mode)
+      /* 处理 BLE 模块 */
+      if (bleIsOpen && bleChannel != NULL)
       {
-        uint8_t size = audio::buffer::getWiFiPacketFront(&sendBuffer);
-        for (int part = 0; part < size; part++)
+        /* 发送 */
+        if (config::status.audio.start)
         {
-          socket_send(sendBuffer[part]);
-        }
-        if (sendBuffer != NULL)
+                }
+        if (statusNumber++ >= RF_CLIENT_STATUS_PERIOD)
         {
-          free(sendBuffer);
-          sendBuffer = NULL;
+          // // 发送状态包
+          // netbuf *buf = netbuf_new();
+          // if (buf != NULL)
+          // {
+          //   Packet *packet = (Packet *)netbuf_alloc(buf, PACKET_CLIENT_STATUS_SIZE);
+          //   packet->type = PACKET_TYPE_CLIENT_STATUS;
+          //   packet->packet.clientStatus.status = PACKET_CLIENT_STATUS_OK;
+          //   packet->packet.clientStatus.battery = (uint8_t)power::getBATPercent();
+          //   socket_send(buf);
+          // }
+          // statusNumber = 0;
         }
-      }
-      if (statusNumber++ == RF_CLIENT_STATUS_PERIOD)
-      {
-        // 发送状态包
-        netbuf *buf = netbuf_new();
-        if (buf != NULL)
-        {
-          Packet *packet = (Packet *)netbuf_alloc(buf, PACKET_CLIENT_STATUS_SIZE);
-          packet->type = PACKET_TYPE_CLIENT_STATUS;
-          memcpy(packet->packet.clientStatus.bleMAC, bleMAC, 6);
-          memcpy(packet->packet.clientStatus.wifiMAC, wifiMAC, 6);
-          packet->packet.clientStatus.battery = (uint8_t)power::getBATPercent();
-          socket_send(buf);
-        }
-        statusNumber = 0;
-      }
 
-      /* 接收 */
-      if (socket_receive(&receiveBuffer))
-      {
-        uint8_t *data;
-        uint16_t len;
-        do
+        /* 接收 */
+        while (!bleReceive.empty())
         {
-          netbuf_data(receiveBuffer, (void **)&data, &len);
-          data += WIFI_IP_HEAD_LEN;
-          len -= WIFI_IP_HEAD_LEN;
+          uint8_t *packet = bleReceive.front();
           // 解析数据包
-          rf_receive_packet(data);
-
-        } while (netbuf_next(receiveBuffer) >= 0);
-        netbuf_delete(receiveBuffer);
+          rf_receive_packet(packet);
+          heap_caps_free(packet);
+          bleReceive.pop();
+        }
       }
+      break;
+    }
+    case RF_MODE_WIFI:
+    {
+      /* 处理 WIFI 模块 */
+      if (wifiIsOpen && socketIsOpen)
+      {
+        /* 发送 */
+        if (config::status.audio.start)
+        {
+          uint8_t size = audio::buffer::getWiFiPacketFront(&sendBuffer);
+          for (int part = 0; part < size; part++)
+          {
+            socket_send(sendBuffer[part]);
+          }
+          if (sendBuffer != NULL)
+          {
+            free(sendBuffer);
+            sendBuffer = NULL;
+          }
+        }
+        if (statusNumber++ >= RF_CLIENT_STATUS_PERIOD)
+        {
+          // 发送状态包
+          netbuf *buf = netbuf_new();
+          if (buf != NULL)
+          {
+            Packet *packet = (Packet *)netbuf_alloc(buf, PACKET_CLIENT_STATUS_SIZE);
+            packet->type = PACKET_TYPE_CLIENT_STATUS;
+            packet->packet.clientStatus.status = PACKET_CLIENT_STATUS_OK;
+            packet->packet.clientStatus.battery = (uint8_t)power::getBATPercent();
+            socket_send(buf);
+          }
+          statusNumber = 0;
+        }
+
+        /* 接收 */
+        if (socket_receive(&receiveBuffer))
+        {
+          uint8_t *data;
+          uint16_t len;
+          do
+          {
+            netbuf_data(receiveBuffer, (void **)&data, &len);
+            data += WIFI_IP_HEAD_LEN;
+            len -= WIFI_IP_HEAD_LEN;
+            // 解析数据包
+            rf_receive_packet(data);
+          } while (netbuf_next(receiveBuffer) >= 0);
+          netbuf_delete(receiveBuffer);
+        }
+      }
+      break;
+    }
     }
   }
 }

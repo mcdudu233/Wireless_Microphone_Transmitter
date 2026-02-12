@@ -1,5 +1,7 @@
 #pragma once
 
+#include "config.h"
+
 // 客户端状态发送频率
 #define RF_CLIENT_STATUS_PERIOD 1000 // ms
 
@@ -17,25 +19,24 @@
 
 // 客户端状态
 #define PACKET_CLIENT_STATUS_SIZE (sizeof(uint8_t) + sizeof(ClientStatusPacket))
-#define PACKET_CLIENT_STATUS_BLE_MAC_NONE 0
-#define PACKET_CLIENT_STATUS_WIFI_MAC_NONE 0
+enum PacketClientStatus : uint8_t
+{
+  PACKET_CLIENT_STATUS_OK = 0,
+  PACKET_CLIENT_STATUS_ERROR_UNKNOW = 255,
+};
 struct __attribute__((packed)) ClientStatusPacket
 {
-  uint8_t bleMAC[6] = {PACKET_CLIENT_STATUS_BLE_MAC_NONE};
-  uint8_t wifiMAC[6] = {PACKET_CLIENT_STATUS_WIFI_MAC_NONE};
+  PacketClientStatus status = PACKET_CLIENT_STATUS_OK;
   uint8_t battery = 0x00;
 };
 
 // 服务端控制设备
-#define PACKET_SERVER_CONTROL_DEVICE_SIZE (sizeof(uint8_t) + sizeof(ServerControlDevicePacket))
-struct __attribute__((packed)) ServerControlDevicePacket
+#define PACKET_SERVER_CONTROL_RF_SIZE (sizeof(uint8_t) + sizeof(ServerControlRFPacket))
+struct __attribute__((packed)) ServerControlRFPacket
 {
-  bool start = false;
-  bool startWiFi = false;
-  bool startBLE = true;
-  bool mode = false; // true: WiFi模式; false: BLE模式
-  char name[32] = "";
-  char password[32] = "";
+  RFMode mode = RF_MODE_BLE;
+  RFText ssid = "";
+  RFText password = "";
 };
 
 // 服务端控制音频
@@ -43,12 +44,11 @@ struct __attribute__((packed)) ServerControlDevicePacket
 struct __attribute__((packed)) ServerControlAudioPacket
 {
   bool start = false;
-  uint8_t channel = 2;
-  uint32_t rate = 48000;
-  uint8_t bit = 16;
-  bool autoVolumn = false;
-  bool peekVolumn = false;
-  uint8_t volumn = 0;
+  AudioChannel channel = AUDIO_CHANNEL_SINGLE;
+  AudioRate rate = AUDIO_RATE_48000;
+  AudioBit bit = AUDIO_BIT_16;
+  AudioMode mode = AUDIO_MODE_AUTO;
+  AudioGain gain = 0;
 };
 
 // WIFI传输包
@@ -74,7 +74,7 @@ struct __attribute__((packed)) BLEAudioPacket
 };
 
 // 统一协议
-enum PacketType
+enum PacketType : uint8_t
 {
   PACKET_TYPE_WIFI_AUDIO = 0,
   PACKET_TYPE_BLE_AUDIO = 1,
@@ -86,7 +86,7 @@ enum PacketType
 };
 struct __attribute__((packed)) Packet
 {
-  uint8_t type; // 标识是哪个包
+  PacketType type; // 标识是哪个包
   union
   {
     // 音频包
@@ -94,7 +94,7 @@ struct __attribute__((packed)) Packet
     BLEAudioPacket audioDataBLE;
     // 状态配置包
     ClientStatusPacket clientStatus;
-    ServerControlDevicePacket serverControlDevice;
+    ServerControlRFPacket serverControlRF;
     ServerControlAudioPacket serverControlAudio;
   } packet;
 };

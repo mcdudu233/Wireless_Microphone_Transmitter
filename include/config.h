@@ -6,7 +6,7 @@
 #define CONFIG_NAME "config"
 #define CONFIG_DATA_NAME "config"
 #define CONFIG_VERSION_NAME "version"
-#define CONFIG_VERSION_VALUE 0x0009 // 前两位大版本号 后两位小版本号
+#define CONFIG_VERSION_VALUE 0x000A // 前两位大版本号 后两位小版本号
 
 #define TASK_SYSTEM_CORE 1
 #define TASK_SYSTEM_PERIOD 1000
@@ -32,6 +32,50 @@
 #define TASK_RF_PRIORITY 8
 #define TASK_RF_STACK 3072
 
+// 射频模式
+enum RFMode : uint8_t
+{
+  RF_MODE_BLE = 1,
+  RF_MODE_WIFI = 2
+};
+
+// 射频文本
+typedef char RFText[16];
+
+// 音频声道
+enum AudioChannel : uint8_t
+{
+  AUDIO_CHANNEL_SINGLE = 1, // 单声道
+  AUDIO_CHANNEL_STEREO = 2  // 立体声
+};
+
+// 音频采样率
+enum AudioRate : uint32_t
+{
+  AUDIO_RATE_48000 = 48000,
+  AUDIO_RATE_96000 = 96000,
+  AUDIO_RATE_192000 = 192000
+};
+
+// 音频比特
+enum AudioBit : uint8_t
+{
+  AUDIO_BIT_16 = 16,
+  AUDIO_BIT_24 = 24,
+  AUDIO_BIT_32 = 32
+};
+
+// 音频模式
+enum AudioMode : uint8_t
+{
+  AUDIO_MODE_AUTO = 0,
+  AUDIO_MODE_PEEK = 1,
+  AUDIO_MODE_MANUAL = 2
+};
+
+// 音频增益 [-64, 63] 单位: dB
+typedef int8_t AudioGain;
+
 namespace config
 {
   enum TransmitMode
@@ -46,23 +90,19 @@ namespace config
     // 设备信息
     struct
     {
-      bool start = false;
-      bool startWiFi = false;
-      bool startBLE = true;
-      bool mode = false; // true: WiFi模式; false: BLE模式
-      char name[32] = "";
-      char password[32] = "";
-    } device;
+      RFMode mode = RF_MODE_BLE;
+      RFText ssid = "";
+      RFText password = "";
+    } rf;
     // 音频信息
     struct
     {
       bool start = false;
-      uint8_t channel = 2;
-      uint32_t rate = 48000;
-      uint8_t bit = 16;
-      bool autoVolumn = false;
-      bool peekVolumn = false;
-      uint8_t volumn = 0;
+      AudioChannel channel = AUDIO_CHANNEL_SINGLE;
+      AudioRate rate = AUDIO_RATE_48000;
+      AudioBit bit = AUDIO_BIT_16;
+      AudioMode mode = AUDIO_MODE_AUTO;
+      AudioGain gain = 0;
     } audio;
   };
   extern StatusValue status;
