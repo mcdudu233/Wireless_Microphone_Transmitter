@@ -66,6 +66,10 @@ uint8_t audio::buffer::getWiFiPacketFront(netbuf ***buffers)
     wifiLastNumber = audio->num; // 已发送
 
     uint8_t part_max = audio->size / PACKET_WIFI_AUDIO_DATA_MAX_SIZE + 1;
+    if (audio->size % PACKET_WIFI_AUDIO_DATA_MAX_SIZE != 0)
+    {
+      part_max += 1;
+    }
     *buffers = (netbuf **)malloc(sizeof(netbuf *) * part_max);
     if (*buffers == NULL)
     {
@@ -142,7 +146,11 @@ uint8_t audio::buffer::getBLEPacketFront(Packet ***buffers)
   {
     bleLastNumber = audio->num; // 已发送
 
-    uint8_t part_max = audio->size / PACKET_BLE_AUDIO_DATA_MAX_SIZE + 1;
+    uint8_t part_max = audio->size / PACKET_BLE_AUDIO_DATA_MAX_SIZE;
+    if (audio->size % PACKET_BLE_AUDIO_DATA_MAX_SIZE != 0)
+    {
+      part_max += 1;
+    }
     *buffers = (Packet **)malloc(sizeof(Packet *) * part_max);
     if (*buffers == NULL)
     {

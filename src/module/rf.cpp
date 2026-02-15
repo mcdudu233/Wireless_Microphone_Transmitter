@@ -345,7 +345,7 @@ static int ble_l2cap_handler(struct ble_l2cap_event *event, void *arg)
     // 接受连接
     os_mbuf *sdu_rx;
     sdu_rx = os_msys_get_pkthdr(BLE_L2CAP_MTU, 0);
-    if (!sdu_rx)
+    if (sdu_rx == NULL)
     {
       LOGGER_WARN("BLE L2CAP accept no memory!");
       break;
@@ -378,7 +378,7 @@ static int ble_l2cap_handler(struct ble_l2cap_event *event, void *arg)
     // 响应数据 准备接收下一个数据包
     os_mbuf *sdu_rx;
     sdu_rx = os_msys_get_pkthdr(BLE_L2CAP_MTU, 0);
-    if (!sdu_rx)
+    if (sdu_rx == NULL)
     {
       LOGGER_WARN("BLE L2CAP accept no memory!");
       break;
@@ -410,6 +410,13 @@ static int ble_gap_handler(struct ble_gap_event *event, void *arg)
   {
     if (event->connect.status == 0)
     {
+      // 设置蓝牙控制器包长提升性能
+      rc = ble_hs_hci_util_set_data_len(event->connect.conn_handle, BLE_PACKET_LENGTH, BLE_PACKET_TIME);
+      if (rc != 0)
+      {
+        LOGGER_WARN("BLE set packet length failed; rc = %d", rc);
+      }
+
       // 连接成功
       bleConnectionHandle = event->connect.conn_handle;
       // 创建 L2CAP 服务器
@@ -442,6 +449,22 @@ static int ble_gap_handler(struct ble_gap_event *event, void *arg)
       ble_start_advertising();
     }
     LOGGER_INFO("BLE disconnected. reason=%d", event->disconnect.reason);
+    break;
+  }
+
+  // 连接参数更新事件
+  case BLE_GAP_EVENT_CONN_UPDATE:
+  {
+    ble_gap_conn_desc desc;
+    rc = ble_gap_conn_find(event->conn_update.conn_handle, &desc);
+    if (rc != 0)
+    {
+      LOGGER_WARN("BLE connection updated, but ble_gap_conn_find desc failed!");
+    }
+    LOGGER_INFO("BLE connection updated; status=%d handle=%d conn_itvl=%d conn_latency=%d supervision_timeout=%d encrypted=%d authenticated=%d bonded=%d",
+                event->conn_update.status, desc.conn_handle,
+                desc.conn_itvl, desc.conn_latency, desc.supervision_timeout,
+                desc.sec_state.encrypted, desc.sec_state.authenticated, desc.sec_state.bonded);
     break;
   }
 
@@ -541,7 +564,7 @@ static void ble_start_advertising()
     rc = ble_gap_adv_set_fields(&fields);
     if (rc != 0)
     {
-      LOGGER_WARN("BLE error setting advertisement data! rc=%d\n", rc);
+      LOGGER_WARN("BLE error setting advertisement data! rc=%d", rc);
       return;
     }
 
@@ -554,7 +577,7 @@ static void ble_start_advertising()
     rc = ble_gap_adv_start(BLE_OWN_ADDR_PUBLIC, NULL, BLE_HS_FOREVER, &adv_params, ble_gap_handler, NULL);
     if (rc != 0)
     {
-      LOGGER_WARN("BLE error enabling advertisement! rc=%d\n", rc);
+      LOGGER_WARN("BLE error enabling advertisement! rc=%d", rc);
       return;
     }
 
@@ -674,7 +697,7 @@ static void rf_receive_packet(const uint8_t *data)
   }
 
   // 配置设备
-  case PACKET_TYPE_SERVER_CONTROL_DEVICE:
+  case PACKET_TYPE_SERVER_CONTROL_RF:
   {
     LOGGER_INFO("RF get config control.");
     ServerControlRFPacket *src = &packet->packet.serverControlRF;
@@ -855,6 +878,7 @@ static void rf_handle(void *arg)
           packet->packet.clientStatus.status = PACKET_CLIENT_STATUS_OK;
           packet->packet.clientStatus.battery = (uint8_t)power::getBATPercent();
           ble_send((uint8_t *)packet, PACKET_CLIENT_STATUS_SIZE);
+          free(packet);
           statusNumber = 0;
         }
 

@@ -7,6 +7,8 @@
 
 // 蓝牙
 #define BLE_NAME "MicTx"
+#define BLE_PACKET_LENGTH 251
+#define BLE_PACKET_TIME 2120
 #define BLE_L2CAP_PSM 0x1001
 #define BLE_L2CAP_MTU 512
 // WiFi
@@ -81,7 +83,7 @@ enum PacketType : uint8_t
   PACKET_TYPE_CLIENT_ACK = 2,
   PACKET_TYPE_SERVER_ACK = 3,
   PACKET_TYPE_CLIENT_STATUS = 4,
-  PACKET_TYPE_SERVER_CONTROL_DEVICE = 5,
+  PACKET_TYPE_SERVER_CONTROL_RF = 5,
   PACKET_TYPE_SERVER_CONTROL_AUDIO = 6,
 };
 struct __attribute__((packed)) Packet
