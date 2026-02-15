@@ -135,6 +135,63 @@ uint8_t audio::buffer::getWiFiPacketFront(netbuf ***buffers)
 }
 
 static uint32_t bleLastNumber = 0;
+uint8_t audio::buffer::getBLEPacketFront(Packet ***buffers)
+{
+  AudioData *audio = getAudioDataFront();
+  if (audio->num > bleLastNumber)
+  {
+    bleLastNumber = audio->num; // 已发送
+
+    uint8_t part_max = audio->size / PACKET_BLE_AUDIO_DATA_MAX_SIZE + 1;
+    *buffers = (Packet **)malloc(sizeof(Packet *) * part_max);
+    if (*buffers == NULL)
+    {
+      LOGGER_WARN("BLE (Packet **) malloc failed!");
+      return 0;
+    }
+    // 创建每个包
+    for (uint8_t part = 0; part < part_max; part++)
+    {
+      // 计算包大小
+      uint16_t part_size;
+      if (part != part_max - 1)
+      {
+        part_size = PACKET_BLE_AUDIO_DATA_MAX_SIZE;
+      }
+      else
+      {
+        // 最后一个包不一定是满的
+        part_size = audio->size - PACKET_BLE_AUDIO_DATA_MAX_SIZE * (part_max - 1);
+      }
+
+      // 初始化结构体
+      Packet *buffer = (Packet *)malloc(PACKET_BLE_AUDIO_HEAD_SIZE + part_size);
+      if (buffer == NULL)
+      {
+        // 释放之前已分配的资源
+        for (uint8_t i = 0; i < part; i++)
+        {
+          free((*buffers)[i]);
+        }
+        free(*buffers);
+        *buffers = NULL;
+        LOGGER_WARN("BLE Packet malloc failed!");
+        return 0;
+      }
+      (*buffers)[part] = buffer;
+      buffer->type = PACKET_TYPE_BLE_AUDIO;
+      buffer->packet.audioDataBLE.size = part_size;
+      buffer->packet.audioDataBLE.number = audio->num;
+      buffer->packet.audioDataBLE.part = part;
+      memcpy(buffer->packet.audioDataBLE.data, audio->data + PACKET_BLE_AUDIO_DATA_MAX_SIZE * part, part_size);
+    }
+    return part_max;
+  }
+  else
+  {
+    return 0;
+  }
+}
 
 void audio::buffer::restart()
 {

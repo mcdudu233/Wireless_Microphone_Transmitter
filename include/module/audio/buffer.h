@@ -39,4 +39,8 @@ namespace audio::buffer
   // 获取目前的音频数据包分包
   uint8_t getWiFiPacketFront(netbuf ***buffers);
   // uint8_t getWiFiPacketFromNumber(uint32_t number, netbuf **buffer);
+
+  /* 读取BLE数据 */
+  // 获取目前的音频数据包分包
+  uint8_t getBLEPacketFront(Packet ***buffers);
 }

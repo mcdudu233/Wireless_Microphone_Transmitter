@@ -285,12 +285,8 @@ static bool bleIsClosing = false;
 static bool bleIsAdvertising = false;
 static uint16_t bleConnectionHandle = 0;
 static ble_l2cap_chan *bleChannel = NULL;
-// 储存池
-#define BLE_L2CAP_COC_BUF_COUNT (20 * MYNEWT_VAL(BLE_L2CAP_COC_MAX_NUM))
-static os_membuf_t bleMemory[OS_MEMPOOL_SIZE(BLE_L2CAP_COC_BUF_COUNT, BLE_L2CAP_MTU)];
-static os_mempool bleMemoryPool;
-static os_mbuf_pool bleBufferpool;
-static std::queue<uint8_t *> bleReceive;
+// 蓝牙接收队列
+static std::queue<uint8_t *> bleReceiveQueue;
 
 static void ble_start_advertising();
 static void ble_stop_advertising();
@@ -346,16 +342,9 @@ static int ble_l2cap_handler(struct ble_l2cap_event *event, void *arg)
   // 接收连接事件
   case BLE_L2CAP_EVENT_COC_ACCEPT:
   {
-    ble_l2cap_chan_info chan_info;
-    rc = ble_l2cap_get_chan_info(event->accept.chan, &chan_info);
-    if (rc != 0)
-    {
-      LOGGER_WARN("Failed to get L2CAP channel info: %d", rc);
-      break;
-    }
     // 接受连接
     os_mbuf *sdu_rx;
-    sdu_rx = os_mbuf_get_pkthdr(&bleBufferpool, 0);
+    sdu_rx = os_msys_get_pkthdr(BLE_L2CAP_MTU, 0);
     if (!sdu_rx)
     {
       LOGGER_WARN("BLE L2CAP accept no memory!");
@@ -367,7 +356,7 @@ static int ble_l2cap_handler(struct ble_l2cap_event *event, void *arg)
       LOGGER_WARN("BLE L2CAP accept failed!");
       break;
     }
-    LOGGER_INFO("BLE L2CAP accept request for psm=%d.", chan_info.psm);
+    LOGGER_INFO("BLE L2CAP accept request.");
     break;
   }
 
@@ -376,18 +365,19 @@ static int ble_l2cap_handler(struct ble_l2cap_event *event, void *arg)
   {
     if (event->receive.sdu_rx != NULL)
     {
-      uint16_t data_len = OS_MBUF_PKTLEN(event->receive.sdu_rx);
       // 放进接收队列
-      uint8_t *packet = (uint8_t *)heap_caps_malloc(event->receive.sdu_rx->om_len, MALLOC_CAP_SPIRAM);
-      memcpy(packet, event->receive.sdu_rx->om_data, event->receive.sdu_rx->om_len);
-      bleReceive.push(packet);
+      uint8_t *data = event->receive.sdu_rx->om_data;
+      uint16_t size = event->receive.sdu_rx->om_len;
+      uint8_t *packet = (uint8_t *)malloc(size);
+      memcpy(packet, data, size);
+      bleReceiveQueue.push(packet);
       os_mbuf_free(event->receive.sdu_rx);
-      LOGGER_INFO("BLE received %d bytes on L2CAP channel.", event->receive.sdu_rx->om_len);
+      LOGGER_INFO("BLE received %d bytes on L2CAP channel.", size);
     }
 
     // 响应数据 准备接收下一个数据包
     os_mbuf *sdu_rx;
-    sdu_rx = os_mbuf_get_pkthdr(&bleBufferpool, 0);
+    sdu_rx = os_msys_get_pkthdr(BLE_L2CAP_MTU, 0);
     if (!sdu_rx)
     {
       LOGGER_WARN("BLE L2CAP accept no memory!");
@@ -598,15 +588,6 @@ static bool ble_close()
       return false;
     }
 
-    // 清理内存池os_error_t
-    rc = os_mempool_clear(&bleMemoryPool);
-    if (rc != OS_OK)
-    {
-      LOGGER_WARN("NimBLE os_mempool_clear failed: %d", rc);
-      bleIsClosing = false;
-      return false;
-    }
-
     // 清理全局状态
     bleConnectionHandle = BLE_HS_CONN_HANDLE_NONE;
     bleChannel = NULL;
@@ -637,20 +618,6 @@ static bool ble_open()
   ble_hs_cfg.sync_cb = ble_on_sync;
   ble_hs_cfg.store_status_cb = NULL;
 
-  // 创建接受池
-  ret = os_mempool_init(&bleMemoryPool, BLE_L2CAP_COC_BUF_COUNT, BLE_L2CAP_MTU, bleMemory, "coc_sdu_pool");
-  if (ret != 0)
-  {
-    LOGGER_WARN("BLE os_mempool_init failed: %d", ret);
-    return false;
-  }
-  ret = os_mbuf_pool_init(&bleBufferpool, &bleMemoryPool, BLE_L2CAP_MTU, BLE_L2CAP_COC_BUF_COUNT);
-  if (ret != 0)
-  {
-    LOGGER_WARN("BLE os_mbuf_pool_init failed: %d", ret);
-    return false;
-  }
-
   // 启动 NimBLE 主机任务
   nimble_port_freertos_init(ble_host_task);
 
@@ -674,7 +641,7 @@ bool ble_send(const uint8_t *data, uint16_t len)
     return false;
   }
 
-  struct os_mbuf *om = ble_hs_mbuf_from_flat(data, len);
+  os_mbuf *om = ble_hs_mbuf_from_flat(data, len);
   if (!om)
   {
     LOGGER_WARN("BLE failed to allocate mbuf.");
@@ -845,8 +812,9 @@ static void rf_receive_packet(const uint8_t *data)
 static void rf_handle(void *arg)
 {
   // 缓存
-  netbuf *receiveBuffer = NULL;
-  netbuf **sendBuffer = NULL;
+  Packet **bleSendBuffer = NULL;
+  netbuf *wifiReceiveBuffer = NULL;
+  netbuf **wifiSendBuffer = NULL;
   // 定时发送设备状态
   uint16_t statusNumber = 0;
 
@@ -867,30 +835,37 @@ static void rf_handle(void *arg)
         /* 发送 */
         if (config::status.audio.start)
         {
-                }
+          uint8_t size = audio::buffer::getBLEPacketFront(&bleSendBuffer);
+          for (int part = 0; part < size; part++)
+          {
+            Packet *packet = bleSendBuffer[part];
+            ble_send((uint8_t *)packet, PACKET_BLE_AUDIO_HEAD_SIZE + packet->packet.audioDataBLE.size);
+          }
+          if (bleSendBuffer != NULL)
+          {
+            free(bleSendBuffer);
+            bleSendBuffer = NULL;
+          }
+        }
         if (statusNumber++ >= RF_CLIENT_STATUS_PERIOD)
         {
-          // // 发送状态包
-          // netbuf *buf = netbuf_new();
-          // if (buf != NULL)
-          // {
-          //   Packet *packet = (Packet *)netbuf_alloc(buf, PACKET_CLIENT_STATUS_SIZE);
-          //   packet->type = PACKET_TYPE_CLIENT_STATUS;
-          //   packet->packet.clientStatus.status = PACKET_CLIENT_STATUS_OK;
-          //   packet->packet.clientStatus.battery = (uint8_t)power::getBATPercent();
-          //   socket_send(buf);
-          // }
-          // statusNumber = 0;
+          // 发送状态包
+          Packet *packet = (Packet *)malloc(PACKET_CLIENT_STATUS_SIZE);
+          packet->type = PACKET_TYPE_CLIENT_STATUS;
+          packet->packet.clientStatus.status = PACKET_CLIENT_STATUS_OK;
+          packet->packet.clientStatus.battery = (uint8_t)power::getBATPercent();
+          ble_send((uint8_t *)packet, PACKET_CLIENT_STATUS_SIZE);
+          statusNumber = 0;
         }
 
         /* 接收 */
-        while (!bleReceive.empty())
+        while (!bleReceiveQueue.empty())
         {
-          uint8_t *packet = bleReceive.front();
+          uint8_t *packet = bleReceiveQueue.front();
           // 解析数据包
           rf_receive_packet(packet);
           heap_caps_free(packet);
-          bleReceive.pop();
+          bleReceiveQueue.pop();
         }
       }
       break;
@@ -903,15 +878,15 @@ static void rf_handle(void *arg)
         /* 发送 */
         if (config::status.audio.start)
         {
-          uint8_t size = audio::buffer::getWiFiPacketFront(&sendBuffer);
+          uint8_t size = audio::buffer::getWiFiPacketFront(&wifiSendBuffer);
           for (int part = 0; part < size; part++)
           {
-            socket_send(sendBuffer[part]);
+            socket_send(wifiSendBuffer[part]);
           }
-          if (sendBuffer != NULL)
+          if (wifiSendBuffer != NULL)
           {
-            free(sendBuffer);
-            sendBuffer = NULL;
+            free(wifiSendBuffer);
+            wifiSendBuffer = NULL;
           }
         }
         if (statusNumber++ >= RF_CLIENT_STATUS_PERIOD)
@@ -930,19 +905,19 @@ static void rf_handle(void *arg)
         }
 
         /* 接收 */
-        if (socket_receive(&receiveBuffer))
+        if (socket_receive(&wifiReceiveBuffer))
         {
           uint8_t *data;
           uint16_t len;
           do
           {
-            netbuf_data(receiveBuffer, (void **)&data, &len);
+            netbuf_data(wifiReceiveBuffer, (void **)&data, &len);
             data += WIFI_IP_HEAD_LEN;
             len -= WIFI_IP_HEAD_LEN;
             // 解析数据包
             rf_receive_packet(data);
-          } while (netbuf_next(receiveBuffer) >= 0);
-          netbuf_delete(receiveBuffer);
+          } while (netbuf_next(wifiReceiveBuffer) >= 0);
+          netbuf_delete(wifiReceiveBuffer);
         }
       }
       break;

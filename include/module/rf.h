@@ -26,29 +26,29 @@ enum PacketClientStatus : uint8_t
 };
 struct __attribute__((packed)) ClientStatusPacket
 {
-  PacketClientStatus status = PACKET_CLIENT_STATUS_OK;
-  uint8_t battery = 0x00;
+  PacketClientStatus status;
+  uint8_t battery;
 };
 
 // 服务端控制设备
 #define PACKET_SERVER_CONTROL_RF_SIZE (sizeof(uint8_t) + sizeof(ServerControlRFPacket))
 struct __attribute__((packed)) ServerControlRFPacket
 {
-  RFMode mode = RF_MODE_BLE;
-  RFText ssid = "";
-  RFText password = "";
+  RFMode mode;
+  RFText ssid;
+  RFText password;
 };
 
 // 服务端控制音频
 #define PACKET_SERVER_CONTROL_AUDIO_SIZE (sizeof(uint8_t) + sizeof(ServerControlAudioPacket))
 struct __attribute__((packed)) ServerControlAudioPacket
 {
-  bool start = false;
-  AudioChannel channel = AUDIO_CHANNEL_SINGLE;
-  AudioRate rate = AUDIO_RATE_48000;
-  AudioBit bit = AUDIO_BIT_16;
-  AudioMode mode = AUDIO_MODE_AUTO;
-  AudioGain gain = 0;
+  bool start;
+  AudioChannel channel;
+  AudioRate rate;
+  AudioBit bit;
+  AudioMode mode;
+  AudioGain gain;
 };
 
 // WIFI传输包
