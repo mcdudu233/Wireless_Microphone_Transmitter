@@ -9,22 +9,38 @@
 #include "queue"
 
 /*****************************
-          传输层协议
+          WIFI协议
 *****************************/
+#include "esp_mac.h"
+#include "esp_wifi.h"
+#include "esp_event.h"
 #include "lwip/err.h"
 #include "lwip/api.h"
+static bool wifiIsOpen = false;
+static uint8_t wifiRetryTime = 0;
+static uint32_t wifiIP;
+static uint32_t wifiGatewayIP;
+static esp_netif_t *wifiNetIF;
+static EventGroupHandle_t wifiEventGroup;
+static esp_event_handler_instance_t wifiHandleInstance1;
+static esp_event_handler_instance_t wifiHandleInstance2;
 static bool socketIsOpen = false;
 static netconn *socketSendInstance = NULL;
 static netconn *socketReceiveInstance = NULL;
 static ip_addr_t socketDestination;
 
+static bool wifi_is_connected()
+{
+  return (wifiIsOpen && socketIsOpen);
+}
+
 // 发送数据 需要 netbuf_new
-static bool socket_send(netbuf *buf)
+static bool wifi_send(netbuf *buf)
 {
   err_t err = netconn_sendto(socketSendInstance, buf, &socketDestination, WIFI_NO_PORT);
   if (err != ERR_OK)
   {
-    LOGGER_WARN("Socket send failed: %d", err);
+    // LOGGER_WARN("WiFi Socket send failed: %d", err);
     return false;
   }
   // 释放
@@ -33,7 +49,7 @@ static bool socket_send(netbuf *buf)
 }
 
 // 读取数据 需要 netbuf_delete
-static bool socket_receive(netbuf **buf)
+static bool wifi_receive(netbuf **buf)
 {
   err_t err = netconn_recv(socketReceiveInstance, buf);
   if (err == ERR_WOULDBLOCK)
@@ -42,13 +58,13 @@ static bool socket_receive(netbuf **buf)
   }
   else if (err != ERR_OK)
   {
-    LOGGER_WARN("Socket receive failed: %d", err);
+    LOGGER_WARN("WiFi Socket receive failed: %d", err);
     return false;
   }
   return true;
 }
 
-static bool socket_close()
+static bool wifi_socket_close()
 {
   if (socketIsOpen)
   {
@@ -64,52 +80,52 @@ static bool socket_close()
       socketReceiveInstance = NULL;
     }
   }
-  LOGGER_INFO("Socket is shutdown.");
+  LOGGER_INFO("WiFi Socket is shutdown.");
   return true;
 }
 
-static bool socket_open(uint32_t localIP, uint32_t destIP)
+static bool wifi_socket_open(uint32_t localIP, uint32_t destIP)
 {
   if (socketIsOpen)
   {
-    socket_close();
+    wifi_socket_close();
   }
 
   // 创建
   socketSendInstance = netconn_new_with_proto_and_callback(NETCONN_RAW, WIFI_IP_PROTOCOL, NULL);
   if (socketSendInstance == NULL)
   {
-    LOGGER_WARN("Socket unable to create:!");
+    LOGGER_WARN("WiFi Socket unable to create!");
     return false;
   }
   socketReceiveInstance = netconn_new_with_proto_and_callback(NETCONN_RAW, WIFI_IP_PROTOCOL, NULL);
   if (socketReceiveInstance == NULL)
   {
     netconn_delete(socketSendInstance);
-    LOGGER_WARN("Socket unable to create:!");
+    LOGGER_WARN("WiFi Socket unable to create!");
     return false;
   }
 
   // 绑定到指定地址
   ip_addr_t local_ip = {.addr = localIP};
-  err_t ret = netconn_bind(socketSendInstance, &local_ip, WIFI_NO_PORT);
-  if (ret != ERR_OK)
+  err_t err = netconn_bind(socketSendInstance, &local_ip, WIFI_NO_PORT);
+  if (err != ERR_OK)
   {
     netconn_delete(socketSendInstance);
     socketSendInstance = NULL;
     netconn_delete(socketReceiveInstance);
     socketReceiveInstance = NULL;
-    LOGGER_WARN("Socket netconn bind failed: %d", ret);
+    LOGGER_WARN("WiFi Socket netconn bind failed: %d", err);
     return false;
   }
-  ret = netconn_bind(socketReceiveInstance, IP_ADDR_ANY, WIFI_NO_PORT);
-  if (ret != ERR_OK)
+  err = netconn_bind(socketReceiveInstance, IP_ADDR_ANY, WIFI_NO_PORT);
+  if (err != ERR_OK)
   {
     netconn_delete(socketSendInstance);
     socketSendInstance = NULL;
     netconn_delete(socketReceiveInstance);
     socketReceiveInstance = NULL;
-    LOGGER_WARN("Socket netconn bind failed: %d", ret);
+    LOGGER_WARN("WiFi Socket netconn bind failed: %d", err);
     return false;
   }
   // 远程地址
@@ -119,27 +135,9 @@ static bool socket_open(uint32_t localIP, uint32_t destIP)
   netconn_set_nonblocking(socketReceiveInstance, true);
 
   socketIsOpen = true;
-  LOGGER_INFO("Socket is started.");
+  LOGGER_INFO("WiFi Socket is started.");
   return true;
 }
-/****************************/
-
-/*****************************
-          WIFI协议
-*****************************/
-#include "esp_mac.h"
-#include "esp_wifi.h"
-#include "esp_event.h"
-static bool wifiIsOpen = false;
-static uint8_t wifiRetryTime = 0;
-static uint32_t wifiIP;
-static uint32_t wifiGatewayIP;
-static esp_netif_t *wifiNetIF;
-static EventGroupHandle_t wifiEventGroup;
-static esp_event_handler_instance_t wifiHandleInstance1;
-static esp_event_handler_instance_t wifiHandleInstance2;
-static const wifi_init_config_t wifiInitConfig = WIFI_INIT_CONFIG_DEFAULT();
-static wifi_config_t wifiConfig;
 
 static bool wifi_close();
 static bool ble_open();
@@ -148,31 +146,56 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
 {
   if (event_base == WIFI_EVENT)
   {
-    if (event_id == WIFI_EVENT_STA_START)
+    switch (event_id)
     {
+    // STA 启动事件
+    case WIFI_EVENT_STA_START:
+    {
+      // 开始连接
       wifiRetryTime = 0;
       esp_wifi_connect();
       LOGGER_INFO("WiFi is starting to connect.");
+      break;
     }
-    else if (event_id == WIFI_EVENT_STA_CONNECTED)
+
+    // STA 连接成功事件
+    case WIFI_EVENT_STA_CONNECTED:
     {
-      LOGGER_INFO("WiFi success to connect.");
+      break;
     }
-    else if (event_id == WIFI_EVENT_STA_DISCONNECTED)
+
+    // STA 断开连接事件
+    case WIFI_EVENT_STA_DISCONNECTED:
     {
-      LOGGER_WARN("WiFi failed to connect.");
-      if (wifiRetryTime < WIFI_RETRY)
+      if (wifiIsOpen)
       {
-        esp_wifi_connect();
-        wifiRetryTime++;
-        LOGGER_WARN("WiFi retry to connect to the AP.");
+        // 断开连接了
+        LOGGER_WARN("WiFi is disconnected from AP.");
+        // 断开 socket
+        if (socketIsOpen)
+        {
+          wifi_socket_close();
+        }
+        if (wifiRetryTime < WIFI_RETRY)
+        {
+          esp_wifi_connect();
+          wifiRetryTime++;
+          LOGGER_WARN("WiFi %dst try to reconnect to the AP.", wifiRetryTime);
+        }
+        else
+        {
+          // TODO: 重连失败，直接重启
+          power::core_restart();
+        }
       }
       else
       {
-        if (wifiIsOpen)
+        // 正在连接 没连上
+        if (wifiRetryTime < WIFI_RETRY)
         {
-          // TODO: 断开连接直接重启
-          power::core_restart();
+          esp_wifi_connect();
+          wifiRetryTime++;
+          LOGGER_WARN("WiFi %dst try to connect to the AP.", wifiRetryTime);
         }
         else
         {
@@ -180,22 +203,43 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
           LOGGER_WARN("WiFi connect to the AP fail!");
         }
       }
+      break;
+    }
+
+    default:
+    {
+      break;
+    }
     }
   }
   else if (event_base == IP_EVENT)
   {
-    if (event_id == IP_EVENT_STA_GOT_IP)
+    switch (event_id)
+    {
+    // STA 获得 IP 地址事件
+    case IP_EVENT_STA_GOT_IP:
     {
       ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
       wifiIP = event->ip_info.ip.addr;
       wifiGatewayIP = event->ip_info.gw.addr;
-      LOGGER_INFO("WiFi got ip:" IPSTR, IP2STR(&event->ip_info.ip));
       xEventGroupSetBits(wifiEventGroup, WIFI_CONNECTED_BIT);
+      LOGGER_INFO("WiFi got IP:" IPSTR, IP2STR(&event->ip_info.ip));
+      break;
     }
-    else if (event_id == IP_EVENT_STA_LOST_IP)
+
+    // STA 丢失 IP 地址事件
+    case IP_EVENT_STA_LOST_IP:
     {
       wifiIP = 0;
       wifiGatewayIP = 0;
+      LOGGER_INFO("WiFi lost IP.");
+      break;
+    }
+
+    default:
+    {
+      break;
+    }
     }
   }
 }
@@ -204,15 +248,39 @@ static bool wifi_close()
 {
   if (wifiIsOpen)
   {
-    socket_close();
-    ESP_ERROR_CHECK(esp_wifi_stop());
-    ESP_ERROR_CHECK(esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, wifiHandleInstance1));
-    ESP_ERROR_CHECK(esp_event_handler_instance_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, wifiHandleInstance2));
-    ESP_ERROR_CHECK(esp_wifi_deinit());
+    wifi_socket_close();
+    wifiIsOpen = false;
+
+    esp_err_t err;
+    err = esp_wifi_stop();
+    if (err != ESP_OK)
+    {
+      LOGGER_ERROR("WiFi esp_wifi_stop failed! Reason=%s", esp_err_to_name(err));
+      return false;
+    }
+
+    err = esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, wifiHandleInstance1);
+    if (err != ESP_OK)
+    {
+      LOGGER_ERROR("WiFi esp_event_handler_instance_unregister failed! Reason=%s", esp_err_to_name(err));
+      return false;
+    }
+    err = esp_event_handler_instance_unregister(IP_EVENT, ESP_EVENT_ANY_ID, wifiHandleInstance2);
+    if (err != ESP_OK)
+    {
+      LOGGER_ERROR("WiFi esp_event_handler_instance_unregister failed! Reason=%s", esp_err_to_name(err));
+      return false;
+    }
+
+    err = esp_wifi_deinit();
+    if (err != ESP_OK)
+    {
+      LOGGER_ERROR("WiFi esp_wifi_deinit failed! Reason=%s", esp_err_to_name(err));
+      return false;
+    }
+
     esp_netif_destroy(wifiNetIF);
     vEventGroupDelete(wifiEventGroup);
-    wifiNetIF = NULL;
-    wifiIsOpen = false;
   }
   LOGGER_INFO("WiFi is shutdown.");
   return true;
@@ -227,45 +295,88 @@ static bool wifi_open(const char *ssid, const char *password)
 
   wifiEventGroup = xEventGroupCreate();
 
-  ESP_ERROR_CHECK(esp_netif_init());
-  ESP_ERROR_CHECK(esp_event_loop_create_default());
+  esp_err_t err;
+  err = esp_netif_init();
+  if (err != ESP_OK)
+  {
+    LOGGER_ERROR("WiFi esp_netif_init failed! Reason=%s", esp_err_to_name(err));
+    return false;
+  }
+
+  err = esp_event_loop_create_default();
+  if (err != ESP_OK)
+  {
+    LOGGER_ERROR("WiFi esp_event_loop_create_default failed! Reason=%s", esp_err_to_name(err));
+    return false;
+  }
   wifiNetIF = esp_netif_create_default_wifi_sta();
 
-  wifi_init_config_t cfg = wifiInitConfig;
-  ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+  static wifi_init_config_t wifi_init_config = WIFI_INIT_CONFIG_DEFAULT();
+  err = esp_wifi_init(&wifi_init_config);
+  if (err != ESP_OK)
+  {
+    LOGGER_ERROR("WiFi esp_event_loop_create_default failed! Reason=%s", esp_err_to_name(err));
+    return false;
+  }
 
-  ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, &wifiHandleInstance1));
-  ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL, &wifiHandleInstance2));
+  err = esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, &wifiHandleInstance1);
+  if (err != ESP_OK)
+  {
+    LOGGER_ERROR("WiFi esp_event_handler_instance_register failed! Reason=%s", esp_err_to_name(err));
+    return false;
+  }
+  err = esp_event_handler_instance_register(IP_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, &wifiHandleInstance2);
+  if (err != ESP_OK)
+  {
+    LOGGER_ERROR("WiFi esp_event_handler_instance_register failed! Reason=%s", esp_err_to_name(err));
+    return false;
+  }
 
-  strcpy((char *)wifiConfig.sta.ssid, ssid);
-  strcpy((char *)wifiConfig.sta.password, password);
-  wifiConfig.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
-  ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-  ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifiConfig));
-  ESP_ERROR_CHECK(esp_wifi_start());
+  err = esp_wifi_set_mode(WIFI_MODE_STA);
+  if (err != ESP_OK)
+  {
+    LOGGER_ERROR("WiFi esp_wifi_set_mode failed! Reason=%s", esp_err_to_name(err));
+    return false;
+  }
 
-  /* Waiting until either the connection is established (WIFI_CONNECTED_BIT) or connection failed for the maximum
-   * number of re-tries (WIFI_FAIL_BIT). The bits are set by event_handler() (see above) */
-  EventBits_t bits = xEventGroupWaitBits(wifiEventGroup,
-                                         WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
-                                         pdFALSE,
-                                         pdFALSE,
-                                         portMAX_DELAY);
+  static wifi_config_t wifi_config;
+  strcpy((char *)wifi_config.sta.ssid, ssid);
+  strcpy((char *)wifi_config.sta.password, password);
+  wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+  err = esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
+  if (err != ESP_OK)
+  {
+    LOGGER_ERROR("WiFi esp_wifi_set_config failed! Reason=%s", esp_err_to_name(err));
+    return false;
+  }
 
-  wifiIsOpen = true;
-  LOGGER_INFO("WiFi is started for local IP %d.%d.%d.%d, gateway IP %d.%d.%d.%d.",
-              ((uint8_t *)&wifiIP)[0], ((uint8_t *)&wifiIP)[1], ((uint8_t *)&wifiIP)[2], ((uint8_t *)&wifiIP)[3],
-              ((uint8_t *)&wifiGatewayIP)[0], ((uint8_t *)&wifiGatewayIP)[1], ((uint8_t *)&wifiGatewayIP)[2], ((uint8_t *)&wifiGatewayIP)[3]);
+  err = esp_wifi_start();
+  if (err != ESP_OK)
+  {
+    LOGGER_ERROR("WiFi esp_wifi_start failed! Reason=%s", esp_err_to_name(err));
+    return false;
+  }
 
-  /* xEventGroupWaitBits() returns the bits before the call returned, hence we can test which event actually
-   * happened. */
+  // 等待 WiFi 连接成功或者失败
+  EventBits_t bits = xEventGroupWaitBits(wifiEventGroup, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT, pdFALSE, pdFALSE, portMAX_DELAY);
   if (bits & WIFI_CONNECTED_BIT)
   {
-    socket_open(wifiIP, wifiGatewayIP);
+    LOGGER_INFO("WiFi is started for local IP %d.%d.%d.%d, gateway IP %d.%d.%d.%d.",
+                ((uint8_t *)&wifiIP)[0], ((uint8_t *)&wifiIP)[1], ((uint8_t *)&wifiIP)[2], ((uint8_t *)&wifiIP)[3],
+                ((uint8_t *)&wifiGatewayIP)[0], ((uint8_t *)&wifiGatewayIP)[1], ((uint8_t *)&wifiGatewayIP)[2], ((uint8_t *)&wifiGatewayIP)[3]);
+    wifiIsOpen = true;
+    if (!wifi_socket_open(wifiIP, wifiGatewayIP))
+    {
+      wifi_close();
+      return false;
+    }
     return true;
   }
   else
   {
+    wifiIsOpen = true;
+    wifi_close();
+    LOGGER_WARN("WiFi started failed! Can't connect to %s (%s)!", ssid, password);
     return false;
   }
 }
@@ -897,7 +1008,7 @@ static void rf_handle(void *arg)
     case RF_MODE_WIFI:
     {
       /* 处理 WIFI 模块 */
-      if (wifiIsOpen && socketIsOpen)
+      if (wifi_is_connected())
       {
         /* 发送 */
         if (config::status.audio.start)
@@ -905,7 +1016,7 @@ static void rf_handle(void *arg)
           uint8_t size = audio::buffer::getWiFiPacketFront(&wifiSendBuffer);
           for (int part = 0; part < size; part++)
           {
-            socket_send(wifiSendBuffer[part]);
+            wifi_send(wifiSendBuffer[part]);
           }
           if (wifiSendBuffer != NULL)
           {
@@ -923,13 +1034,13 @@ static void rf_handle(void *arg)
             packet->type = PACKET_TYPE_CLIENT_STATUS;
             packet->packet.clientStatus.status = PACKET_CLIENT_STATUS_OK;
             packet->packet.clientStatus.battery = (uint8_t)power::getBATPercent();
-            socket_send(buf);
+            wifi_send(buf);
           }
           statusNumber = 0;
         }
 
         /* 接收 */
-        if (socket_receive(&wifiReceiveBuffer))
+        if (wifi_receive(&wifiReceiveBuffer))
         {
           uint8_t *data;
           uint16_t len;
