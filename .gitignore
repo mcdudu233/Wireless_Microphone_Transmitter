@@ -7,4 +7,3 @@ sdkconfig.debug.old
 sdkconfig.release.old
 build/firmware.bin
 managed_components
-dependencies.lock
