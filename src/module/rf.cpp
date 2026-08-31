@@ -161,6 +161,17 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
     // STA 连接成功事件
     case WIFI_EVENT_STA_CONNECTED:
     {
+      if (wifiRetryTime != 0)
+      {
+        if (wifiIsOpen)
+        {
+          // 重连成功
+          if (!socketIsOpen)
+          {
+            wifi_socket_open(wifiIP, wifiGatewayIP);
+          }
+        }
+      }
       break;
     }
 
@@ -230,8 +241,8 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
     // STA 丢失 IP 地址事件
     case IP_EVENT_STA_LOST_IP:
     {
-      wifiIP = 0;
-      wifiGatewayIP = 0;
+      // wifiIP = 0;
+      // wifiGatewayIP = 0;
       LOGGER_INFO("WiFi lost IP.");
       break;
     }
@@ -296,13 +307,13 @@ static bool wifi_open(const char *ssid, const char *password)
   wifiEventGroup = xEventGroupCreate();
 
   esp_err_t err;
+  // 创建网络接口
   err = esp_netif_init();
   if (err != ESP_OK)
   {
     LOGGER_ERROR("WiFi esp_netif_init failed! Reason=%s", esp_err_to_name(err));
     return false;
   }
-
   err = esp_event_loop_create_default();
   if (err != ESP_OK)
   {
@@ -311,6 +322,7 @@ static bool wifi_open(const char *ssid, const char *password)
   }
   wifiNetIF = esp_netif_create_default_wifi_sta();
 
+  // 初始化 WiFi
   static wifi_init_config_t wifi_init_config = WIFI_INIT_CONFIG_DEFAULT();
   err = esp_wifi_init(&wifi_init_config);
   if (err != ESP_OK)
@@ -319,6 +331,7 @@ static bool wifi_open(const char *ssid, const char *password)
     return false;
   }
 
+  // 注册事件
   err = esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, &wifiHandleInstance1);
   if (err != ESP_OK)
   {
@@ -332,24 +345,23 @@ static bool wifi_open(const char *ssid, const char *password)
     return false;
   }
 
+  // 启动 WiFi STA
+  static wifi_config_t wifi_config;
+  strcpy((char *)wifi_config.sta.ssid, ssid);
+  strcpy((char *)wifi_config.sta.password, password);
+  wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
   err = esp_wifi_set_mode(WIFI_MODE_STA);
   if (err != ESP_OK)
   {
     LOGGER_ERROR("WiFi esp_wifi_set_mode failed! Reason=%s", esp_err_to_name(err));
     return false;
   }
-
-  static wifi_config_t wifi_config;
-  strcpy((char *)wifi_config.sta.ssid, ssid);
-  strcpy((char *)wifi_config.sta.password, password);
-  wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
   err = esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
   if (err != ESP_OK)
   {
     LOGGER_ERROR("WiFi esp_wifi_set_config failed! Reason=%s", esp_err_to_name(err));
     return false;
   }
-
   err = esp_wifi_start();
   if (err != ESP_OK)
   {
