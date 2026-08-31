@@ -6,8 +6,6 @@
 #include "module/audio/encoder.h"
 #include "module/audio/buffer.h"
 
-#include "queue"
-
 /*****************************
           WIFI协议
 *****************************/
@@ -17,6 +15,8 @@
 #include "lwip/err.h"
 #include "lwip/api.h"
 static bool wifiIsOpen = false;
+static bool netifInitialized = false;
+static bool eventLoopInitialized = false;
 static uint8_t wifiRetryTime = 0;
 static uint32_t wifiIP;
 static uint32_t wifiGatewayIP;
@@ -37,10 +37,15 @@ static bool wifi_is_connected()
 // 发送数据 需要 netbuf_new
 static bool wifi_send(netbuf *buf)
 {
+  if (buf == NULL || socketSendInstance == NULL)
+  {
+    if (buf != NULL) netbuf_delete(buf);
+    return false;
+  }
   err_t err = netconn_sendto(socketSendInstance, buf, &socketDestination, WIFI_NO_PORT);
   if (err != ERR_OK)
   {
-    // LOGGER_WARN("WiFi Socket send failed: %d", err);
+    netbuf_delete(buf);
     return false;
   }
   // 释放
@@ -51,6 +56,7 @@ static bool wifi_send(netbuf *buf)
 // 读取数据 需要 netbuf_delete
 static bool wifi_receive(netbuf **buf)
 {
+  if (buf == NULL || socketReceiveInstance == NULL) return false;
   err_t err = netconn_recv(socketReceiveInstance, buf);
   if (err == ERR_WOULDBLOCK)
   {
@@ -107,7 +113,8 @@ static bool wifi_socket_open(uint32_t localIP, uint32_t destIP)
   }
 
   // 绑定到指定地址
-  ip_addr_t local_ip = {.addr = localIP};
+  ip_addr_t local_ip = {};
+  local_ip.u_addr.ip4.addr = localIP;
   err_t err = netconn_bind(socketSendInstance, &local_ip, WIFI_NO_PORT);
   if (err != ERR_OK)
   {
@@ -129,7 +136,7 @@ static bool wifi_socket_open(uint32_t localIP, uint32_t destIP)
     return false;
   }
   // 远程地址
-  socketDestination.addr = destIP;
+  socketDestination.u_addr.ip4.addr = destIP;
 
   // 设置非阻塞模式
   netconn_set_nonblocking(socketReceiveInstance, true);
@@ -161,17 +168,6 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
     // STA 连接成功事件
     case WIFI_EVENT_STA_CONNECTED:
     {
-      if (wifiRetryTime != 0)
-      {
-        if (wifiIsOpen)
-        {
-          // 重连成功
-          if (!socketIsOpen)
-          {
-            wifi_socket_open(wifiIP, wifiGatewayIP);
-          }
-        }
-      }
       break;
     }
 
@@ -195,7 +191,6 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
         }
         else
         {
-          // TODO: 重连失败，直接重启
           power::core_restart();
         }
       }
@@ -233,6 +228,10 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
       ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
       wifiIP = event->ip_info.ip.addr;
       wifiGatewayIP = event->ip_info.gw.addr;
+      if (wifiIsOpen && !socketIsOpen)
+      {
+        wifi_socket_open(wifiIP, wifiGatewayIP);
+      }
       xEventGroupSetBits(wifiEventGroup, WIFI_CONNECTED_BIT);
       LOGGER_INFO("WiFi got IP:" IPSTR, IP2STR(&event->ip_info.ip));
       break;
@@ -241,8 +240,9 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
     // STA 丢失 IP 地址事件
     case IP_EVENT_STA_LOST_IP:
     {
-      // wifiIP = 0;
-      // wifiGatewayIP = 0;
+      wifi_socket_close();
+      wifiIP = 0;
+      wifiGatewayIP = 0;
       LOGGER_INFO("WiFi lost IP.");
       break;
     }
@@ -308,17 +308,25 @@ static bool wifi_open(const char *ssid, const char *password)
 
   esp_err_t err;
   // 创建网络接口
-  err = esp_netif_init();
-  if (err != ESP_OK)
+  if (!netifInitialized)
   {
-    LOGGER_ERROR("WiFi esp_netif_init failed! Reason=%s", esp_err_to_name(err));
-    return false;
+    err = esp_netif_init();
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE)
+    {
+      LOGGER_ERROR("WiFi esp_netif_init failed! Reason=%s", esp_err_to_name(err));
+      return false;
+    }
+    netifInitialized = true;
   }
-  err = esp_event_loop_create_default();
-  if (err != ESP_OK)
+  if (!eventLoopInitialized)
   {
-    LOGGER_ERROR("WiFi esp_event_loop_create_default failed! Reason=%s", esp_err_to_name(err));
-    return false;
+    err = esp_event_loop_create_default();
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE)
+    {
+      LOGGER_ERROR("WiFi esp_event_loop_create_default failed! Reason=%s", esp_err_to_name(err));
+      return false;
+    }
+    eventLoopInitialized = true;
   }
   wifiNetIF = esp_netif_create_default_wifi_sta();
 
@@ -408,8 +416,13 @@ static bool bleIsClosing = false;
 static bool bleIsAdvertising = false;
 static uint16_t bleConnectionHandle = 0;
 static ble_l2cap_chan *bleChannel = NULL;
-// 蓝牙接收队列
-static std::queue<uint8_t *> bleReceiveQueue;
+// 蓝牙接收队列，避免在 NimBLE 回调和 RF 任务之间共享 STL 容器。
+struct BleReceive
+{
+  uint16_t size;
+  uint8_t data[BLE_L2CAP_MTU];
+};
+static QueueHandle_t bleReceiveQueue;
 
 static void ble_start_advertising();
 static void ble_stop_advertising();
@@ -456,7 +469,7 @@ static int ble_l2cap_handler(struct ble_l2cap_event *event, void *arg)
     }
     if (chan_info.psm == BLE_L2CAP_PSM)
     {
-      bleChannel == NULL;
+      bleChannel = NULL;
       LOGGER_INFO("BLE channel disconnected.");
     }
     break;
@@ -489,11 +502,19 @@ static int ble_l2cap_handler(struct ble_l2cap_event *event, void *arg)
     if (event->receive.sdu_rx != NULL)
     {
       // 放进接收队列
-      uint8_t *data = event->receive.sdu_rx->om_data;
       uint16_t size = event->receive.sdu_rx->om_len;
-      uint8_t *packet = (uint8_t *)malloc(size);
-      memcpy(packet, data, size);
-      bleReceiveQueue.push(packet);
+      BleReceive receive = {.size = size};
+      if (size > sizeof(receive.data))
+      {
+        LOGGER_WARN("BLE packet is too large: %u", size);
+        os_mbuf_free(event->receive.sdu_rx);
+        break;
+      }
+      memcpy(receive.data, event->receive.sdu_rx->om_data, size);
+      if (xQueueSend(bleReceiveQueue, &receive, 0) != pdPASS)
+      {
+        LOGGER_WARN("BLE receive queue is full.");
+      }
       os_mbuf_free(event->receive.sdu_rx);
       LOGGER_INFO("BLE received %d bytes on L2CAP channel.", size);
     }
@@ -808,8 +829,12 @@ bool ble_send(const uint8_t *data, uint16_t len)
 /****************************/
 
 // 解析数据包
-static void rf_receive_packet(const uint8_t *data)
+static bool rf_receive_packet(const uint8_t *data, size_t len)
 {
+  if (data == nullptr || len < sizeof(PacketType))
+  {
+    return false;
+  }
   Packet *packet = (Packet *)data;
   switch (packet->type)
   {
@@ -822,6 +847,12 @@ static void rf_receive_packet(const uint8_t *data)
   // 配置设备
   case PACKET_TYPE_SERVER_CONTROL_RF:
   {
+    if (len != PACKET_SERVER_CONTROL_RF_SIZE ||
+        memchr(packet->packet.serverControlRF.ssid, '\0', sizeof(RFText)) == nullptr ||
+        memchr(packet->packet.serverControlRF.password, '\0', sizeof(RFText)) == nullptr)
+    {
+      return false;
+    }
     LOGGER_INFO("RF get config control.");
     ServerControlRFPacket *src = &packet->packet.serverControlRF;
     // 复制 SSID 和 密码
@@ -844,7 +875,7 @@ static void rf_receive_packet(const uint8_t *data)
         if (!ble_close())
         {
           // TODO: 失败发送给接收端
-          return;
+          return false;
         }
         break;
       }
@@ -853,7 +884,7 @@ static void rf_receive_packet(const uint8_t *data)
         if (!wifi_close())
         {
           // TODO: 失败发送给接收端
-          return;
+          return false;
         }
         break;
       }
@@ -866,7 +897,7 @@ static void rf_receive_packet(const uint8_t *data)
         if (!ble_open())
         {
           // TODO: 失败发送给接收端
-          return;
+          return false;
         }
         break;
       }
@@ -875,7 +906,7 @@ static void rf_receive_packet(const uint8_t *data)
         if (!wifi_open(config::status.rf.ssid, config::status.rf.password))
         {
           // TODO: 失败发送给接收端
-          return;
+          return false;
         }
         break;
       }
@@ -888,30 +919,22 @@ static void rf_receive_packet(const uint8_t *data)
   // 配置音频
   case PACKET_TYPE_SERVER_CONTROL_AUDIO:
   {
+    if (len != PACKET_SERVER_CONTROL_AUDIO_SIZE)
+    {
+      return false;
+    }
     LOGGER_INFO("BLE get audio control.");
     ServerControlAudioPacket *src = &packet->packet.serverControlAudio;
-    if (config::status.audio.channel != src->channel)
+    if (config::status.audio.channel != src->channel ||
+        config::status.audio.rate != src->rate ||
+        config::status.audio.bit != src->bit)
     {
       if (audio::encoder::isOn())
       {
-        audio::encoder::on(src->channel, config::status.audio.rate, config::status.audio.bit, config::status.audio.mode, config::status.audio.gain);
+        audio::encoder::on(src->channel, src->rate, src->bit, config::status.audio.mode, config::status.audio.gain);
       }
       config::status.audio.channel = src->channel;
-    }
-    if (config::status.audio.rate != src->rate)
-    {
-      if (audio::encoder::isOn())
-      {
-        audio::encoder::on(config::status.audio.channel, src->rate, config::status.audio.bit, config::status.audio.mode, config::status.audio.gain);
-      }
       config::status.audio.rate = src->rate;
-    }
-    if (config::status.audio.bit != src->bit)
-    {
-      if (audio::encoder::isOn())
-      {
-        audio::encoder::on(config::status.audio.channel, config::status.audio.rate, src->bit, config::status.audio.mode, config::status.audio.gain);
-      }
       config::status.audio.bit = src->bit;
     }
     // 音频模式改变
@@ -953,6 +976,7 @@ static void rf_receive_packet(const uint8_t *data)
     break;
   }
   }
+  return true;
 }
 
 static void rf_handle(void *arg)
@@ -1006,13 +1030,11 @@ static void rf_handle(void *arg)
         }
 
         /* 接收 */
-        while (!bleReceiveQueue.empty())
+        BleReceive receive;
+        while (xQueueReceive(bleReceiveQueue, &receive, 0) == pdPASS)
         {
-          uint8_t *packet = bleReceiveQueue.front();
           // 解析数据包
-          rf_receive_packet(packet);
-          heap_caps_free(packet);
-          bleReceiveQueue.pop();
+          rf_receive_packet(receive.data, receive.size);
         }
       }
       break;
@@ -1059,10 +1081,14 @@ static void rf_handle(void *arg)
           do
           {
             netbuf_data(wifiReceiveBuffer, (void **)&data, &len);
+            if (data == nullptr || len < WIFI_IP_HEAD_LEN)
+            {
+              break;
+            }
             data += WIFI_IP_HEAD_LEN;
             len -= WIFI_IP_HEAD_LEN;
             // 解析数据包
-            rf_receive_packet(data);
+            rf_receive_packet(data, len);
           } while (netbuf_next(wifiReceiveBuffer) >= 0);
           netbuf_delete(wifiReceiveBuffer);
         }
@@ -1076,6 +1102,12 @@ static void rf_handle(void *arg)
 void rf::setup()
 {
   LOGGER_INFO("Radio Frequency is starting...");
+  bleReceiveQueue = xQueueCreate(16, sizeof(BleReceive));
+  if (bleReceiveQueue == nullptr)
+  {
+    LOGGER_ERROR("BLE receive queue creation failed.");
+    return;
+  }
   ble_open();
   // 启动发送接收线程
   xTaskCreatePinnedToCore(rf_handle, "rf_handle", TASK_RF_STACK, NULL, TASK_RF_PRIORITY, NULL, TASK_RF_CORE);

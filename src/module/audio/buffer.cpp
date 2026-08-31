@@ -65,10 +65,11 @@ uint8_t audio::buffer::getWiFiPacketFront(netbuf ***buffers)
   {
     wifiLastNumber = audio->num; // 已发送
 
-    uint8_t part_max = audio->size / PACKET_WIFI_AUDIO_DATA_MAX_SIZE + 1;
-    if (audio->size % PACKET_WIFI_AUDIO_DATA_MAX_SIZE != 0)
+    uint8_t part_max = (audio->size + PACKET_WIFI_AUDIO_DATA_MAX_SIZE - 1) /
+                       PACKET_WIFI_AUDIO_DATA_MAX_SIZE;
+    if (part_max == 0)
     {
-      part_max += 1;
+      return 0;
     }
     *buffers = (netbuf **)malloc(sizeof(netbuf *) * part_max);
     if (*buffers == NULL)

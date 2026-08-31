@@ -345,9 +345,12 @@ void audio::encoder::off()
       alc_handle = NULL;
     }
     // 关闭 i2s
-    i2s_channel_disable(i2s_rx_handle);
-    i2s_rx_handle = NULL;
-    i2s_del_channel(i2s_rx_handle);
+    i2s_chan_handle_t old_handle = i2s_rx_handle;
+    if (old_handle != NULL)
+    {
+      i2s_channel_disable(old_handle);
+      i2s_del_channel(old_handle);
+    }
     i2s_rx_handle = NULL;
     // 关闭电源
     if (audio::power::isOn())
