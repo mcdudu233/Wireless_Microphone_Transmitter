@@ -375,20 +375,17 @@ void audio::encoder::on(AudioChannel channel, AudioRate rate, AudioBit bit, Audi
     off();
   }
 
-  // 启动电源
-  if (!audio::power::isOn())
-  {
-    audio::power::on();
-  }
-
   i2s_channel = channel;
   i2s_rate = rate;
   i2s_bit = bit;
   i2s_mode = mode;
   i2s_gain = gain;
   auto_gain = (gain > AGC_GAIN_INITIAL) ? (float)gain : AGC_GAIN_INITIAL;
-  // 启动 i2s
-  i2s_new_channel(&i2s_chan_cfg, NULL, &i2s_rx_handle);
+
+  // PCM1822要求上电前模式脚已经稳定，电源稳定后才能送BCLK/FSYNC。
+  digitalWrite(AUDIO_ENCODER_MD0, HIGH);
+  digitalWrite(AUDIO_ENCODER_MD1, LOW);
+
   i2s_std_config_t std_cfg = {
       .clk_cfg = {
           .sample_rate_hz = (uint32_t)rate,
@@ -400,8 +397,38 @@ void audio::encoder::on(AudioChannel channel, AudioRate rate, AudioBit bit, Audi
       .slot_cfg = i2s_slot_cfg,
       .gpio_cfg = i2s_gpio_cfg,
   };
-  i2s_channel_init_std_mode(i2s_rx_handle, &std_cfg);
-  i2s_channel_enable(i2s_rx_handle);
+
+  esp_err_t i2s_result = i2s_new_channel(&i2s_chan_cfg, NULL, &i2s_rx_handle);
+  if (i2s_result != ESP_OK)
+  {
+    i2s_rx_handle = NULL;
+    LOGGER_WARN("Audio Encoder cannot create I2S channel: %s", esp_err_to_name(i2s_result));
+    return;
+  }
+
+  i2s_result = i2s_channel_init_std_mode(i2s_rx_handle, &std_cfg);
+  if (i2s_result != ESP_OK)
+  {
+    LOGGER_WARN("Audio Encoder cannot configure I2S: %s", esp_err_to_name(i2s_result));
+    i2s_del_channel(i2s_rx_handle);
+    i2s_rx_handle = NULL;
+    return;
+  }
+
+  if (!audio::power::isOn())
+  {
+    audio::power::on();
+  }
+
+  i2s_result = i2s_channel_enable(i2s_rx_handle);
+  if (i2s_result != ESP_OK)
+  {
+    LOGGER_WARN("Audio Encoder cannot enable I2S: %s", esp_err_to_name(i2s_result));
+    i2s_del_channel(i2s_rx_handle);
+    i2s_rx_handle = NULL;
+    audio::power::off();
+    return;
+  }
   // 启动增益模块
   esp_ae_alc_cfg_t alc_cfg = {
       .sample_rate = (uint32_t)rate,
