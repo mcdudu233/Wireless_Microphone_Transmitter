@@ -65,6 +65,48 @@ static esp_ae_ch_cvt_handle_t ch_cvt_handle = NULL;
 static bool powerOn = false;
 static float auto_gain = AGC_GAIN_INITIAL;
 
+#ifdef BUILD_DEBUG
+static uint32_t getPcmPeak(const uint8_t *pcm, size_t size, AudioBit bit)
+{
+  uint32_t peak = 0;
+  const size_t bytes_per_sample = static_cast<size_t>(bit) / 8;
+  for (size_t offset = 0; bytes_per_sample > 0 && offset + bytes_per_sample <= size; offset += bytes_per_sample)
+  {
+    int64_t sample = 0;
+    if (bit == AUDIO_BIT_16)
+    {
+      sample = static_cast<int16_t>(static_cast<uint16_t>(pcm[offset]) |
+                                    (static_cast<uint16_t>(pcm[offset + 1]) << 8));
+    }
+    else if (bit == AUDIO_BIT_24)
+    {
+      int32_t value = static_cast<int32_t>(pcm[offset]) |
+                      (static_cast<int32_t>(pcm[offset + 1]) << 8) |
+                      (static_cast<int32_t>(pcm[offset + 2]) << 16);
+      if ((value & 0x00800000) != 0)
+      {
+        value |= 0xFF000000;
+      }
+      sample = value;
+    }
+    else
+    {
+      sample = static_cast<int32_t>(static_cast<uint32_t>(pcm[offset]) |
+                                    (static_cast<uint32_t>(pcm[offset + 1]) << 8) |
+                                    (static_cast<uint32_t>(pcm[offset + 2]) << 16) |
+                                    (static_cast<uint32_t>(pcm[offset + 3]) << 24));
+    }
+
+    const uint32_t magnitude = static_cast<uint32_t>(sample < 0 ? -sample : sample);
+    if (magnitude > peak)
+    {
+      peak = magnitude;
+    }
+  }
+  return peak;
+}
+#endif
+
 static float dBFromV(float v)
 {
   return 20.0f * log10f(v);
@@ -90,7 +132,13 @@ static void audioHandle(void *arg)
   int32_t auto_peak = 0;
   uint32_t auto_avg = 0;
 #ifdef BUILD_DEBUG
-  unsigned long level_log_time = 0;
+  uint32_t level_log_time = millis();
+  uint32_t raw_peak = 0;
+  uint32_t output_peak = 0;
+  uint32_t frames_read = 0;
+  uint32_t bytes_sent = 0;
+  uint32_t read_errors = 0;
+  uint32_t process_errors = 0;
 #endif
 
   TickType_t xLastWakeTime = xTaskGetTickCount();
@@ -108,6 +156,14 @@ static void audioHandle(void *arg)
       if (ret == ESP_OK && bytes_read > 0)
       {
         size = bytes_read;
+#ifdef BUILD_DEBUG
+        frames_read++;
+        const uint32_t frame_raw_peak = getPcmPeak(reinterpret_cast<const uint8_t *>(i2s_data1), size, AUDIO_BIT_32);
+        if (frame_raw_peak > raw_peak)
+        {
+          raw_peak = frame_raw_peak;
+        }
+#endif
         // read_len++;
         // if (millis() - last_time >= 1000)
         // {
@@ -178,15 +234,6 @@ static void audioHandle(void *arg)
                 esp_ae_alc_set_gain(alc_handle, 0, (int8_t)auto_gain);
                 esp_ae_alc_set_gain(alc_handle, 1, (int8_t)auto_gain);
               }
-#ifdef BUILD_DEBUG
-              if (millis() - level_log_time >= 1000)
-              {
-                level_log_time = millis();
-                LOGGER_DEBUG("Audio capture peak=%ld avg=%lu gain=%.1fdB bytes=%u",
-                             (long)auto_peak, (unsigned long)auto_avg,
-                             (double)auto_gain, (unsigned int)size);
-              }
-#endif
               break;
             }
             // 峰值减少增益
@@ -208,6 +255,9 @@ static void audioHandle(void *arg)
           {
             LOGGER_WARN("Audio Encoder's ALC process failed!");
             frame_valid = false;
+#ifdef BUILD_DEBUG
+            process_errors++;
+#endif
           }
         }
         // 声道转换
@@ -225,6 +275,9 @@ static void audioHandle(void *arg)
           {
             LOGGER_WARN("Audio Encoder's channel process failed!");
             frame_valid = false;
+#ifdef BUILD_DEBUG
+            process_errors++;
+#endif
           }
         }
         // 比特转换
@@ -241,6 +294,9 @@ static void audioHandle(void *arg)
           {
             LOGGER_WARN("Audio Encoder's bit process failed!");
             frame_valid = false;
+#ifdef BUILD_DEBUG
+            process_errors++;
+#endif
           }
         }
         if (!frame_valid)
@@ -248,28 +304,54 @@ static void audioHandle(void *arg)
           continue;
         }
         // 送到缓冲里面 (写完后再发布, 避免发送任务读到写了一半的数据)
+        const uint8_t *output_data = reinterpret_cast<const uint8_t *>(in_data1 ? i2s_data1 : i2s_data2);
+#ifdef BUILD_DEBUG
+        const uint32_t frame_output_peak = getPcmPeak(output_data, size, i2s_bit);
+        if (frame_output_peak > output_peak)
+        {
+          output_peak = frame_output_peak;
+        }
+        bytes_sent += size;
+#endif
         data = audio::buffer::getWritePointer(size);
-        if (in_data1)
-        {
-          memcpy(data, i2s_data1, size);
-        }
-        else
-        {
-          memcpy(data, i2s_data2, size);
-        }
+        memcpy(data, output_data, size);
         audio::buffer::commitWrite();
       }
       else if (ret == ESP_ERR_TIMEOUT)
       {
         // read_loss++;
         LOGGER_WARN("Audio Encoder's I2S read fail! Time out!");
+#ifdef BUILD_DEBUG
+        read_errors++;
+#endif
       }
       else
       {
         // read_loss++;
         LOGGER_WARN("Audio Encoder's I2S read fail! ");
+#ifdef BUILD_DEBUG
+        read_errors++;
+#endif
       }
     }
+
+#ifdef BUILD_DEBUG
+    if (millis() - level_log_time >= 1000)
+    {
+      level_log_time = millis();
+      LOGGER_DEBUG("Audio capture on=%u mode=%u gain=%d raw_peak=%lu output_peak=%lu frames=%lu bytes=%lu read_errors=%lu process_errors=%lu",
+                   powerOn ? 1U : 0U, static_cast<unsigned int>(i2s_mode), static_cast<int>(i2s_gain),
+                   static_cast<unsigned long>(raw_peak), static_cast<unsigned long>(output_peak),
+                   static_cast<unsigned long>(frames_read), static_cast<unsigned long>(bytes_sent),
+                   static_cast<unsigned long>(read_errors), static_cast<unsigned long>(process_errors));
+      raw_peak = 0;
+      output_peak = 0;
+      frames_read = 0;
+      bytes_sent = 0;
+      read_errors = 0;
+      process_errors = 0;
+    }
+#endif
   }
 }
 
@@ -355,7 +437,9 @@ void audio::encoder::on(AudioChannel channel, AudioRate rate, AudioBit bit, Audi
     esp_ae_bit_cvt_open(&bit_cvt_cfg, &bit_cvt_handle);
   }
   powerOn = true;
-  LOGGER_INFO("Audio Encoder is on.");
+  LOGGER_INFO("Audio Encoder is on: %luHz/%ubit/%uch mode=%u gain=%d.", static_cast<unsigned long>(i2s_rate),
+              static_cast<unsigned int>(i2s_bit), static_cast<unsigned int>(i2s_channel),
+              static_cast<unsigned int>(i2s_mode), static_cast<int>(i2s_gain));
 }
 
 void audio::encoder::off()
