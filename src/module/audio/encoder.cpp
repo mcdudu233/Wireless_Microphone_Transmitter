@@ -63,6 +63,7 @@ static esp_ae_bit_cvt_handle_t bit_cvt_handle = NULL;
 static esp_ae_ch_cvt_handle_t ch_cvt_handle = NULL;
 
 static bool powerOn = false;
+static float auto_gain = AGC_GAIN_INITIAL;
 
 static float dBFromV(float v)
 {
@@ -79,15 +80,18 @@ static void audioHandle(void *arg)
   esp_err_t ret;
   // 音频包数据
   size_t size;
+  size_t bytes_read;
   size_t sample_num;
   uint8_t *data;
   // 自动增益
   int32_t *auto_data;
-  float auto_gain = 0;
   const float auto_gain_target = pow10f(AGC_GAIN_TARGET / 20.0f);
   const float auto_gain_peak = pow10f(AGC_GAIN_PEAK / 20.0f);
   int32_t auto_peak = 0;
   uint32_t auto_avg = 0;
+#ifdef BUILD_DEBUG
+  unsigned long level_log_time = 0;
+#endif
 
   TickType_t xLastWakeTime = xTaskGetTickCount();
   const TickType_t xFrequency = pdMS_TO_TICKS(TASK_AUDIO_ENCODER_PERIOD);
@@ -99,9 +103,11 @@ static void audioHandle(void *arg)
     if (powerOn)
     {
       size = (uint32_t)i2s_rate / 1000 * AUDIO_ENCODER_POLLING_CYCLE * AUDIO_ENCODER_BIT / 8 * AUDIO_ENCODER_CHANNEL;
-      ret = i2s_channel_read(i2s_rx_handle, i2s_data1, size, NULL, AUDIO_ENCODER_POLLING_CYCLE * 2);
-      if (ret == ESP_OK)
+      bytes_read = 0;
+      ret = i2s_channel_read(i2s_rx_handle, i2s_data1, size, &bytes_read, pdMS_TO_TICKS(AUDIO_ENCODER_POLLING_CYCLE * 2));
+      if (ret == ESP_OK && bytes_read > 0)
       {
+        size = bytes_read;
         // read_len++;
         // if (millis() - last_time >= 1000)
         // {
@@ -114,6 +120,7 @@ static void audioHandle(void *arg)
 
         sample_num = size * 8 / AUDIO_ENCODER_BIT / AUDIO_ENCODER_CHANNEL;
         bool in_data1 = true;
+        bool frame_valid = true;
         // 增益
         if (alc_handle != NULL)
         {
@@ -171,6 +178,15 @@ static void audioHandle(void *arg)
                 esp_ae_alc_set_gain(alc_handle, 0, (int8_t)auto_gain);
                 esp_ae_alc_set_gain(alc_handle, 1, (int8_t)auto_gain);
               }
+#ifdef BUILD_DEBUG
+              if (millis() - level_log_time >= 1000)
+              {
+                level_log_time = millis();
+                LOGGER_DEBUG("Audio capture peak=%ld avg=%lu gain=%.1fdB bytes=%u",
+                             (long)auto_peak, (unsigned long)auto_avg,
+                             (double)auto_gain, (unsigned int)size);
+              }
+#endif
               break;
             }
             // 峰值减少增益
@@ -191,10 +207,11 @@ static void audioHandle(void *arg)
           else
           {
             LOGGER_WARN("Audio Encoder's ALC process failed!");
+            frame_valid = false;
           }
         }
         // 声道转换
-        if (ch_cvt_handle != NULL)
+        if (frame_valid && ch_cvt_handle != NULL)
         {
           if ((in_data1 ? esp_ae_ch_cvt_process(ch_cvt_handle, sample_num, i2s_data1, i2s_data2)
                         : esp_ae_ch_cvt_process(ch_cvt_handle, sample_num, i2s_data2, i2s_data1)) == ESP_OK)
@@ -207,10 +224,11 @@ static void audioHandle(void *arg)
           else
           {
             LOGGER_WARN("Audio Encoder's channel process failed!");
+            frame_valid = false;
           }
         }
         // 比特转换
-        if (bit_cvt_handle != NULL)
+        if (frame_valid && bit_cvt_handle != NULL)
         {
           if ((in_data1 ? esp_ae_bit_cvt_process(bit_cvt_handle, sample_num, i2s_data1, i2s_data2)
                         : esp_ae_bit_cvt_process(bit_cvt_handle, sample_num, i2s_data2, i2s_data1)) == ESP_OK)
@@ -222,7 +240,12 @@ static void audioHandle(void *arg)
           else
           {
             LOGGER_WARN("Audio Encoder's bit process failed!");
+            frame_valid = false;
           }
+        }
+        if (!frame_valid)
+        {
+          continue;
         }
         // 送到缓冲里面 (写完后再发布, 避免发送任务读到写了一半的数据)
         data = audio::buffer::getWritePointer(size);
@@ -281,6 +304,7 @@ void audio::encoder::on(AudioChannel channel, AudioRate rate, AudioBit bit, Audi
   i2s_bit = bit;
   i2s_mode = mode;
   i2s_gain = gain;
+  auto_gain = (gain > AGC_GAIN_INITIAL) ? (float)gain : AGC_GAIN_INITIAL;
   // 启动 i2s
   i2s_new_channel(&i2s_chan_cfg, NULL, &i2s_rx_handle);
   i2s_std_config_t std_cfg = {
@@ -303,8 +327,9 @@ void audio::encoder::on(AudioChannel channel, AudioRate rate, AudioBit bit, Audi
       .bits_per_sample = I2S_DATA_BIT_WIDTH_32BIT,
   };
   esp_ae_alc_open(&alc_cfg, &alc_handle);
-  esp_ae_alc_set_gain(alc_handle, 0, gain);
-  esp_ae_alc_set_gain(alc_handle, 1, gain);
+  const int8_t initial_gain = (mode == AUDIO_MODE_AUTO) ? (int8_t)auto_gain : gain;
+  esp_ae_alc_set_gain(alc_handle, 0, initial_gain);
+  esp_ae_alc_set_gain(alc_handle, 1, initial_gain);
   // 启动通道转换
   if (channel == AUDIO_CHANNEL_SINGLE)
   {
