@@ -19,6 +19,7 @@
 #define AGC_GAIN_PEAK -5          // 峰值不超过多少 dB
 #define AGC_GAIN_MAX 50           // 最大增益 dB
 #define AGC_GAIN_MIN 0            // 最小增益 dB
+#define AGC_NOISE_GATE -60.0f     // 噪声门限 dBFS 低于该电平不提升增益,防止放大底噪
 #define AGC_SPEED_ATTACK 0.005f   // 快增加
 #define AGC_SPEED_RELEASE 0.0025f // 慢减少
 

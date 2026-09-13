@@ -377,6 +377,14 @@ static bool wifi_open(const char *ssid, const char *password)
     return false;
   }
 
+  // 禁用STA省电模式: 默认的省电模式会让AP缓存数据按DTIM周期突发下发,
+  // 接收端40ms的缓冲无法吸收这种抖动, 导致音频"一段一段"断续
+  err = esp_wifi_set_ps(WIFI_PS_NONE);
+  if (err != ESP_OK)
+  {
+    LOGGER_WARN("WiFi esp_wifi_set_ps failed! Reason=%s", esp_err_to_name(err));
+  }
+
   // 等待 WiFi 连接成功或者失败
   EventBits_t bits = xEventGroupWaitBits(wifiEventGroup, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT, pdFALSE, pdFALSE, portMAX_DELAY);
   if (bits & WIFI_CONNECTED_BIT)

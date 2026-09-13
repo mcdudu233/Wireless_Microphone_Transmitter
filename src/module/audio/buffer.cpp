@@ -8,11 +8,18 @@ static uint32_t data_number;
 
 uint8_t *audio::buffer::getWritePointer(uint32_t packet_size)
 {
+  // 写入空闲槽位但暂不推进指针(此时包对读取端不可见),
+  // 配合commitWrite发布完整数据, 避免发送任务读到写了一半的包(撕裂包产生杂音)
   AudioData *buffer = &data[data_pointer];
-  data_pointer = (data_pointer + 1) % AUDIO_BUFFER_MAX_BUFFER_SIZE;
-  buffer->num = data_number++ % UINT32_MAX;
+  buffer->num = data_number % UINT32_MAX;
   buffer->size = packet_size;
   return buffer->data;
+}
+
+void audio::buffer::commitWrite()
+{
+  data_pointer = (data_pointer + 1) % AUDIO_BUFFER_MAX_BUFFER_SIZE;
+  data_number++;
 }
 
 // 获取过去的第N个数据

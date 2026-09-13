@@ -125,43 +125,52 @@ static void audioHandle(void *arg)
             case AUDIO_MODE_AUTO:
             {
               auto_data = (int32_t *)i2s_data1;
-              // 计算峰值和平均功率
-              auto_peak = 0;
-              auto_avg = 0;
+              // 计算峰值和平均幅度 (64位累加防溢出, int64取绝对值避免INT32_MIN取负溢出)
+              int64_t peak = 0;
+              uint64_t magnitude_sum = 0;
               for (uint16_t i = 0; i < sample_num; i++)
               {
-                int32_t left = abs(auto_data[i * 2]);
-                int32_t right = abs(auto_data[i * 2 + 1]);
-                auto_peak = max(auto_peak, max(left, right));
-                auto_avg += (left + right);
-                auto_avg /= 2;
+                int64_t left = auto_data[i * 2];
+                int64_t right = auto_data[i * 2 + 1];
+                left = (left < 0) ? -left : left;
+                right = (right < 0) ? -right : right;
+                if (left > peak)
+                  peak = left;
+                if (right > peak)
+                  peak = right;
+                magnitude_sum += (uint64_t)left + (uint64_t)right;
               }
-              auto_avg /= 2;
+              auto_peak = (peak > INT32_MAX) ? INT32_MAX : (int32_t)peak;
+              auto_avg = (uint32_t)(magnitude_sum / ((uint64_t)sample_num * 2));
 
-              // 根据RMS电平计算目标增益
-              float target_gain = dBFromV(auto_gain_target / (auto_avg * 1.0f / INT32_MAX));
-              float peak_gain = dBFromV(auto_gain_peak / (auto_peak * 1.0f / INT32_MAX));
-              // 取两者中较小的增益
-              float new_gain = (target_gain < peak_gain) ? target_gain : peak_gain;
-
-              // 限制增益范围
-              if (new_gain > AGC_GAIN_MAX)
+              // 噪声门限: 电平过低时保持当前增益, 避免把底噪放大数十dB形成持续电流声
+              const int32_t gate_level = (int32_t)(INT32_MAX * pow10f(AGC_NOISE_GATE / 20.0f));
+              if (auto_peak > gate_level && auto_avg > 0)
               {
-                new_gain = AGC_GAIN_MAX;
-              }
-              if (new_gain < AGC_GAIN_MIN)
-              {
-                new_gain = AGC_GAIN_MIN;
-              }
+                // 根据平均电平计算目标增益
+                float target_gain = dBFromV(auto_gain_target / (auto_avg * 1.0f / INT32_MAX));
+                float peak_gain = dBFromV(auto_gain_peak / (auto_peak * 1.0f / INT32_MAX));
+                // 取两者中较小的增益
+                float new_gain = (target_gain < peak_gain) ? target_gain : peak_gain;
 
-              // 平滑调整增益
-              float gain_diff = new_gain - auto_gain;
-              float adjustment_rate = (gain_diff > 0) ? AGC_SPEED_ATTACK : AGC_SPEED_RELEASE;
-              new_gain = auto_gain + adjustment_rate * gain_diff;
+                // 限制增益范围
+                if (new_gain > AGC_GAIN_MAX)
+                {
+                  new_gain = AGC_GAIN_MAX;
+                }
+                if (new_gain < AGC_GAIN_MIN)
+                {
+                  new_gain = AGC_GAIN_MIN;
+                }
 
-              auto_gain = new_gain;
-              esp_ae_alc_set_gain(alc_handle, 0, (int8_t)auto_gain);
-              esp_ae_alc_set_gain(alc_handle, 1, (int8_t)auto_gain);
+                // 平滑调整增益
+                float gain_diff = new_gain - auto_gain;
+                float adjustment_rate = (gain_diff > 0) ? AGC_SPEED_ATTACK : AGC_SPEED_RELEASE;
+                auto_gain = auto_gain + adjustment_rate * gain_diff;
+
+                esp_ae_alc_set_gain(alc_handle, 0, (int8_t)auto_gain);
+                esp_ae_alc_set_gain(alc_handle, 1, (int8_t)auto_gain);
+              }
               break;
             }
             // 峰值减少增益
@@ -215,7 +224,7 @@ static void audioHandle(void *arg)
             LOGGER_WARN("Audio Encoder's bit process failed!");
           }
         }
-        // 送到缓冲里面
+        // 送到缓冲里面 (写完后再发布, 避免发送任务读到写了一半的数据)
         data = audio::buffer::getWritePointer(size);
         if (in_data1)
         {
@@ -225,6 +234,7 @@ static void audioHandle(void *arg)
         {
           memcpy(data, i2s_data2, size);
         }
+        audio::buffer::commitWrite();
       }
       else if (ret == ESP_ERR_TIMEOUT)
       {

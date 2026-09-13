@@ -32,8 +32,10 @@ namespace audio::buffer
   AudioData *getAudioDataFromNumber(uint32_t number);
 
   /* 写入数据 */
-  // 获取写入数据的指针
+  // 获取写入数据的指针(此时包对读取端不可见,写入完成后必须调用commitWrite发布)
   uint8_t *getWritePointer(uint32_t packet_size);
+  // 发布getWritePointer写入的数据包(推进指针使其对发送端可见)
+  void commitWrite();
 
   /* 读取WiFi数据 */
   // 获取目前的音频数据包分包
