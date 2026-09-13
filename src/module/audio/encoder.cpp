@@ -339,7 +339,7 @@ static void audioHandle(void *arg)
     if (millis() - level_log_time >= 1000)
     {
       level_log_time = millis();
-      LOGGER_DEBUG("Audio capture on=%u mode=%u gain=%d raw_peak=%lu output_peak=%lu frames=%lu bytes=%lu read_errors=%lu process_errors=%lu",
+      LOGGER_INFO("Audio capture on=%u mode=%u gain=%d raw_peak=%lu output_peak=%lu frames=%lu bytes=%lu read_errors=%lu process_errors=%lu",
                    powerOn ? 1U : 0U, static_cast<unsigned int>(i2s_mode), static_cast<int>(i2s_gain),
                    static_cast<unsigned long>(raw_peak), static_cast<unsigned long>(output_peak),
                    static_cast<unsigned long>(frames_read), static_cast<unsigned long>(bytes_sent),
