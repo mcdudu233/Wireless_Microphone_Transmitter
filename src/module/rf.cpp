@@ -12,6 +12,7 @@
 #include "esp_mac.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
+#include "freertos/idf_additions.h"
 #include "lwip/err.h"
 #include "lwip/api.h"
 static bool wifiIsOpen = false;
@@ -28,6 +29,53 @@ static bool socketIsOpen = false;
 static netconn *socketSendInstance = NULL;
 static netconn *socketReceiveInstance = NULL;
 static ip_addr_t socketDestination;
+
+#ifdef BUILD_DEBUG
+struct RfDebugSnapshot
+{
+  bool ready;
+  AudioTxBufferDebugStats buffer;
+  uint32_t sent_parts;
+  uint32_t sent_payload;
+  uint32_t send_fail;
+  uint32_t max_batch_us;
+  int32_t rssi;
+};
+
+static portMUX_TYPE rf_debug_mux = portMUX_INITIALIZER_UNLOCKED;
+static RfDebugSnapshot rf_debug_snapshot = {};
+
+static void rfDebugHandle(void *arg)
+{
+  (void)arg;
+  vTaskDelay(pdMS_TO_TICKS(750));
+  while (true)
+  {
+    RfDebugSnapshot snapshot = {};
+    portENTER_CRITICAL(&rf_debug_mux);
+    if (rf_debug_snapshot.ready)
+    {
+      snapshot = rf_debug_snapshot;
+      rf_debug_snapshot.ready = false;
+    }
+    portEXIT_CRITICAL(&rf_debug_mux);
+    if (snapshot.ready)
+    {
+      LOGGER_INFO("Audio TX WiFi frames=%lu skipped=%lu parts=%lu payload=%lu sent_parts=%lu sent_payload=%lu send_fail=%lu alloc_fail=%lu max_batch_us=%lu rssi=%ld",
+                  static_cast<unsigned long>(snapshot.buffer.frames),
+                  static_cast<unsigned long>(snapshot.buffer.skipped_frames),
+                  static_cast<unsigned long>(snapshot.buffer.parts),
+                  static_cast<unsigned long>(snapshot.buffer.payload_bytes),
+                  static_cast<unsigned long>(snapshot.sent_parts),
+                  static_cast<unsigned long>(snapshot.sent_payload),
+                  static_cast<unsigned long>(snapshot.send_fail),
+                  static_cast<unsigned long>(snapshot.buffer.allocation_errors),
+                  static_cast<unsigned long>(snapshot.max_batch_us), static_cast<long>(snapshot.rssi));
+    }
+    vTaskDelay(pdMS_TO_TICKS(200));
+  }
+}
+#endif
 
 static bool wifi_is_connected()
 {
@@ -1151,12 +1199,17 @@ static void rf_handle(void *arg)
           audio::buffer::getWiFiDebugStats(bufferStats);
           wifi_ap_record_t apInfo = {};
           const int32_t rssi = esp_wifi_sta_get_ap_info(&apInfo) == ESP_OK ? apInfo.rssi : 0;
-          LOGGER_INFO("Audio TX WiFi frames=%lu skipped=%lu parts=%lu payload=%lu sent_parts=%lu sent_payload=%lu send_fail=%lu alloc_fail=%lu max_batch_us=%lu rssi=%ld",
-                      static_cast<unsigned long>(bufferStats.frames), static_cast<unsigned long>(bufferStats.skipped_frames),
-                      static_cast<unsigned long>(bufferStats.parts), static_cast<unsigned long>(bufferStats.payload_bytes),
-                      static_cast<unsigned long>(wifiSendOk), static_cast<unsigned long>(wifiSentPayload),
-                      static_cast<unsigned long>(wifiSendFail), static_cast<unsigned long>(bufferStats.allocation_errors),
-                      static_cast<unsigned long>(wifiMaxBatchUs), static_cast<long>(rssi));
+          RfDebugSnapshot snapshot = {};
+          snapshot.ready = true;
+          snapshot.buffer = bufferStats;
+          snapshot.sent_parts = wifiSendOk;
+          snapshot.sent_payload = wifiSentPayload;
+          snapshot.send_fail = wifiSendFail;
+          snapshot.max_batch_us = wifiMaxBatchUs;
+          snapshot.rssi = rssi;
+          portENTER_CRITICAL(&rf_debug_mux);
+          rf_debug_snapshot = snapshot;
+          portEXIT_CRITICAL(&rf_debug_mux);
           wifiSendOk = 0;
           wifiSendFail = 0;
           wifiSentPayload = 0;
@@ -1182,5 +1235,12 @@ void rf::setup()
   ble_open();
   // 启动发送接收线程
   xTaskCreatePinnedToCore(rf_handle, "rf_handle", TASK_RF_STACK, NULL, TASK_RF_PRIORITY, NULL, TASK_RF_CORE);
+#ifdef BUILD_DEBUG
+  if (xTaskCreatePinnedToCoreWithCaps(rfDebugHandle, "rf_debug", 2560, nullptr, 1, nullptr,
+                                      1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS)
+  {
+    LOGGER_INFO("RF debug task creation failed.");
+  }
+#endif
   LOGGER_INFO("Radio Frequency is started!");
 }

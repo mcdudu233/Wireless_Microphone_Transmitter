@@ -9,6 +9,7 @@
 #include "esp_ae_alc.h"
 #include "esp_ae_bit_cvt.h"
 #include "esp_ae_ch_cvt.h"
+#include "freertos/idf_additions.h"
 
 // I2S 参数
 static const i2s_chan_config_t i2s_chan_cfg = {
@@ -102,6 +103,69 @@ struct RawPcmStats
   uint32_t clipped_samples;
 };
 
+struct EncoderDebugSnapshot
+{
+  bool ready;
+  bool on;
+  uint8_t mode;
+  int8_t gain;
+  int32_t auto_gain_tenths;
+  uint32_t left_peak;
+  uint32_t right_peak;
+  int32_t left_dc;
+  int32_t right_dc;
+  uint32_t zero_permille;
+  uint32_t clipped_samples;
+  uint32_t output_peak;
+  uint32_t frames_read;
+  uint32_t bytes_sent;
+  uint32_t read_errors;
+  uint32_t read_wait_average_us;
+  uint32_t read_wait_max_us;
+  uint32_t process_errors;
+  uint32_t process_max_us;
+};
+
+static portMUX_TYPE encoder_debug_mux = portMUX_INITIALIZER_UNLOCKED;
+static EncoderDebugSnapshot encoder_debug_snapshot = {};
+
+static void encoderDebugHandle(void *arg)
+{
+  (void)arg;
+  vTaskDelay(pdMS_TO_TICKS(350));
+  while (true)
+  {
+    EncoderDebugSnapshot snapshot = {};
+    portENTER_CRITICAL(&encoder_debug_mux);
+    if (encoder_debug_snapshot.ready)
+    {
+      snapshot = encoder_debug_snapshot;
+      encoder_debug_snapshot.ready = false;
+    }
+    portEXIT_CRITICAL(&encoder_debug_mux);
+    if (snapshot.ready)
+    {
+      LOGGER_INFO("Audio capture on=%u mode=%u gain=%d agc_gain=%ld.%01lddB raw_l_peak=%lu raw_r_peak=%lu raw_l_dc=%ld raw_r_dc=%ld zero=%lu.%lu%% clip=%lu output_peak=%lu frames=%lu bytes=%lu read_errors=%lu read_avg_us=%lu read_max_us=%lu process_errors=%lu process_max_us=%lu",
+                  snapshot.on ? 1U : 0U, static_cast<unsigned int>(snapshot.mode), static_cast<int>(snapshot.gain),
+                  static_cast<long>(snapshot.auto_gain_tenths / 10),
+                  static_cast<long>(labs(snapshot.auto_gain_tenths % 10)),
+                  static_cast<unsigned long>(snapshot.left_peak), static_cast<unsigned long>(snapshot.right_peak),
+                  static_cast<long>(snapshot.left_dc), static_cast<long>(snapshot.right_dc),
+                  static_cast<unsigned long>(snapshot.zero_permille / 10U),
+                  static_cast<unsigned long>(snapshot.zero_permille % 10U),
+                  static_cast<unsigned long>(snapshot.clipped_samples),
+                  static_cast<unsigned long>(snapshot.output_peak),
+                  static_cast<unsigned long>(snapshot.frames_read), static_cast<unsigned long>(snapshot.bytes_sent),
+                  static_cast<unsigned long>(snapshot.read_errors),
+                  static_cast<unsigned long>(snapshot.read_wait_average_us),
+                  static_cast<unsigned long>(snapshot.read_wait_max_us),
+                  static_cast<unsigned long>(snapshot.process_errors),
+                  static_cast<unsigned long>(snapshot.process_max_us));
+    }
+    vTaskDelay(pdMS_TO_TICKS(200));
+  }
+}
+
 static void updateRawPcmStats(const uint32_t *pcm, size_t size, RawPcmStats &stats)
 {
   const size_t sample_pairs = size / (sizeof(uint32_t) * AUDIO_ENCODER_CHANNEL);
@@ -194,6 +258,7 @@ static void audioHandle(void *arg)
   const float auto_gain_peak = pow10f(AGC_GAIN_PEAK / 20.0f);
   int32_t auto_peak = 0;
   uint32_t auto_avg = 0;
+  int8_t last_auto_gain = INT8_MIN;
 #ifdef BUILD_DEBUG
   uint32_t level_log_time = millis();
   RawPcmStats raw_stats = {};
@@ -307,8 +372,13 @@ static void audioHandle(void *arg)
                 float adjustment_rate = (gain_diff > 0) ? AGC_SPEED_ATTACK : AGC_SPEED_RELEASE;
                 auto_gain = auto_gain + adjustment_rate * gain_diff;
 
-                esp_ae_alc_set_gain(alc_handle, 0, (int8_t)auto_gain);
-                esp_ae_alc_set_gain(alc_handle, 1, (int8_t)auto_gain);
+                const int8_t requested_auto_gain = static_cast<int8_t>(auto_gain);
+                if (requested_auto_gain != last_auto_gain)
+                {
+                  esp_ae_alc_set_gain(alc_handle, 0, requested_auto_gain);
+                  esp_ae_alc_set_gain(alc_handle, 1, requested_auto_gain);
+                  last_auto_gain = requested_auto_gain;
+                }
               }
               break;
             }
@@ -320,8 +390,7 @@ static void audioHandle(void *arg)
             // 手动增益
             case AUDIO_MODE_MANUAL:
             {
-              esp_ae_alc_set_gain(alc_handle, 0, i2s_gain);
-              esp_ae_alc_set_gain(alc_handle, 1, i2s_gain);
+              // 固定增益已在on()/setGain()中设置，不必每4ms重复配置ALC。
               break;
             }
             }
@@ -382,10 +451,14 @@ static void audioHandle(void *arg)
         // 送到缓冲里面 (写完后再发布, 避免发送任务读到写了一半的数据)
         const uint8_t *output_data = reinterpret_cast<const uint8_t *>(in_data1 ? i2s_data1 : i2s_data2);
 #ifdef BUILD_DEBUG
-        const uint32_t frame_output_peak = getPcmPeak(output_data, size, i2s_bit);
-        if (frame_output_peak > output_peak)
+        // 输出峰值是诊断量，每约16帧抽样一次即可。
+        if ((frames_read & 0x0FU) == 1U)
         {
-          output_peak = frame_output_peak;
+          const uint32_t frame_output_peak = getPcmPeak(output_data, size, i2s_bit);
+          if (frame_output_peak > output_peak)
+          {
+            output_peak = frame_output_peak;
+          }
         }
         bytes_sent += size;
 #endif
@@ -417,6 +490,12 @@ static void audioHandle(void *arg)
 #endif
       }
     }
+    else
+    {
+      // 下次启动自动增益时从确定状态重新开始，避免沿用上一次ALC实例的缓存值。
+      auto_gain = 0;
+      last_auto_gain = INT8_MIN;
+    }
 
 #ifdef BUILD_DEBUG
     if (millis() - level_log_time >= 1000)
@@ -427,18 +506,29 @@ static void audioHandle(void *arg)
       const uint32_t raw_samples = raw_stats.sample_pairs * AUDIO_ENCODER_CHANNEL;
       const uint32_t zero_permille = raw_samples > 0 ? raw_stats.zero_samples * 1000U / raw_samples : 0;
       const int32_t auto_gain_tenths = static_cast<int32_t>(auto_gain * 10.0f);
-      LOGGER_INFO("Audio capture on=%u mode=%u gain=%d agc_gain=%ld.%01lddB raw_l_peak=%lu raw_r_peak=%lu raw_l_dc=%ld raw_r_dc=%ld zero=%lu.%lu%% clip=%lu output_peak=%lu frames=%lu bytes=%lu read_errors=%lu read_avg_us=%lu read_max_us=%lu process_errors=%lu process_max_us=%lu",
-                   powerOn ? 1U : 0U, static_cast<unsigned int>(i2s_mode), static_cast<int>(i2s_gain),
-                   static_cast<long>(auto_gain_tenths / 10), static_cast<long>(labs(auto_gain_tenths % 10)),
-                   static_cast<unsigned long>(raw_stats.left_peak), static_cast<unsigned long>(raw_stats.right_peak),
-                   static_cast<long>(left_dc), static_cast<long>(right_dc),
-                   static_cast<unsigned long>(zero_permille / 10U), static_cast<unsigned long>(zero_permille % 10U),
-                   static_cast<unsigned long>(raw_stats.clipped_samples), static_cast<unsigned long>(output_peak),
-                   static_cast<unsigned long>(frames_read), static_cast<unsigned long>(bytes_sent),
-                   static_cast<unsigned long>(read_errors),
-                   static_cast<unsigned long>(read_calls > 0 ? read_wait_total_us / read_calls : 0),
-                   static_cast<unsigned long>(read_wait_max_us), static_cast<unsigned long>(process_errors),
-                   static_cast<unsigned long>(process_max_us));
+      EncoderDebugSnapshot snapshot = {};
+      snapshot.ready = true;
+      snapshot.on = powerOn;
+      snapshot.mode = static_cast<uint8_t>(i2s_mode);
+      snapshot.gain = static_cast<int8_t>(i2s_gain);
+      snapshot.auto_gain_tenths = auto_gain_tenths;
+      snapshot.left_peak = raw_stats.left_peak;
+      snapshot.right_peak = raw_stats.right_peak;
+      snapshot.left_dc = left_dc;
+      snapshot.right_dc = right_dc;
+      snapshot.zero_permille = zero_permille;
+      snapshot.clipped_samples = raw_stats.clipped_samples;
+      snapshot.output_peak = output_peak;
+      snapshot.frames_read = frames_read;
+      snapshot.bytes_sent = bytes_sent;
+      snapshot.read_errors = read_errors;
+      snapshot.read_wait_average_us = read_calls > 0 ? read_wait_total_us / read_calls : 0;
+      snapshot.read_wait_max_us = read_wait_max_us;
+      snapshot.process_errors = process_errors;
+      snapshot.process_max_us = process_max_us;
+      portENTER_CRITICAL(&encoder_debug_mux);
+      encoder_debug_snapshot = snapshot;
+      portEXIT_CRITICAL(&encoder_debug_mux);
       raw_stats = {};
       output_peak = 0;
       frames_read = 0;
@@ -464,6 +554,13 @@ void audio::encoder::setup()
   digitalWrite(AUDIO_ENCODER_MD0, HIGH);
   digitalWrite(AUDIO_ENCODER_MD1, LOW);
   xTaskCreatePinnedToCore(audioHandle, "audio_encoder_handle", TASK_AUDIO_ENCODER_STACK, NULL, TASK_AUDIO_ENCODER_PRIORITY, NULL, TASK_AUDIO_ENCODER_CORE);
+#ifdef BUILD_DEBUG
+  if (xTaskCreatePinnedToCoreWithCaps(encoderDebugHandle, "audio_encoder_debug", 3072, nullptr, 1, nullptr,
+                                      0, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS)
+  {
+    LOGGER_INFO("Audio Encoder debug task creation failed.");
+  }
+#endif
   LOGGER_INFO("Audio Encoder is started!");
 }
 
