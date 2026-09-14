@@ -34,12 +34,16 @@ static ip_addr_t socketDestination;
 struct RfDebugSnapshot
 {
   bool ready;
+  bool ble_mode;
   AudioTxBufferDebugStats buffer;
   uint32_t sent_parts;
   uint32_t sent_payload;
   uint32_t send_fail;
   uint32_t max_batch_us;
   int32_t rssi;
+  uint32_t ble_parts;
+  uint32_t ble_payload;
+  uint32_t ble_fail;
 };
 
 static portMUX_TYPE rf_debug_mux = portMUX_INITIALIZER_UNLOCKED;
@@ -61,17 +65,27 @@ static void rfDebugHandle(void *arg)
     portEXIT_CRITICAL(&rf_debug_mux);
     if (snapshot.ready)
     {
-      LOGGER_INFO("Audio TX WiFi frames=%lu skipped=%lu backlog_max=%lu parts=%lu payload=%lu sent_parts=%lu sent_payload=%lu send_fail=%lu alloc_fail=%lu max_batch_us=%lu rssi=%ld",
-                  static_cast<unsigned long>(snapshot.buffer.frames),
-                  static_cast<unsigned long>(snapshot.buffer.skipped_frames),
-                  static_cast<unsigned long>(snapshot.buffer.max_backlog),
-                  static_cast<unsigned long>(snapshot.buffer.parts),
-                  static_cast<unsigned long>(snapshot.buffer.payload_bytes),
-                  static_cast<unsigned long>(snapshot.sent_parts),
-                  static_cast<unsigned long>(snapshot.sent_payload),
-                  static_cast<unsigned long>(snapshot.send_fail),
-                  static_cast<unsigned long>(snapshot.buffer.allocation_errors),
-                  static_cast<unsigned long>(snapshot.max_batch_us), static_cast<long>(snapshot.rssi));
+      if (snapshot.ble_mode)
+      {
+        LOGGER_INFO("Audio TX BLE parts=%lu payload=%lu send_fail=%lu",
+                    static_cast<unsigned long>(snapshot.ble_parts),
+                    static_cast<unsigned long>(snapshot.ble_payload),
+                    static_cast<unsigned long>(snapshot.ble_fail));
+      }
+      else
+      {
+        LOGGER_INFO("Audio TX WiFi frames=%lu skipped=%lu backlog_max=%lu parts=%lu payload=%lu sent_parts=%lu sent_payload=%lu send_fail=%lu alloc_fail=%lu max_batch_us=%lu rssi=%ld",
+                    static_cast<unsigned long>(snapshot.buffer.frames),
+                    static_cast<unsigned long>(snapshot.buffer.skipped_frames),
+                    static_cast<unsigned long>(snapshot.buffer.max_backlog),
+                    static_cast<unsigned long>(snapshot.buffer.parts),
+                    static_cast<unsigned long>(snapshot.buffer.payload_bytes),
+                    static_cast<unsigned long>(snapshot.sent_parts),
+                    static_cast<unsigned long>(snapshot.sent_payload),
+                    static_cast<unsigned long>(snapshot.send_fail),
+                    static_cast<unsigned long>(snapshot.buffer.allocation_errors),
+                    static_cast<unsigned long>(snapshot.max_batch_us), static_cast<long>(snapshot.rssi));
+      }
     }
     vTaskDelay(pdMS_TO_TICKS(200));
   }
@@ -573,7 +587,6 @@ static int ble_l2cap_handler(struct ble_l2cap_event *event, void *arg)
         LOGGER_WARN("BLE receive queue is full.");
       }
       os_mbuf_free(event->receive.sdu_rx);
-      LOGGER_INFO("BLE received %d bytes on L2CAP channel.", size);
     }
 
     // 响应数据 准备接收下一个数据包
@@ -796,7 +809,7 @@ static bool ble_close()
     ble_stop_advertising();
 
     // 停止NimBLE主机任务
-    nimble_port_stop();
+    rc = nimble_port_stop();
     if (rc != 0)
     {
       LOGGER_WARN("NimBLE stop failed: %d", rc);
@@ -880,7 +893,6 @@ bool ble_send(const uint8_t *data, uint16_t len)
     return false;
   }
 
-  LOGGER_INFO("BLE sent %d bytes.", len);
   return true;
 }
 /****************************/
@@ -982,6 +994,17 @@ static bool rf_receive_packet(const uint8_t *data, size_t len)
     }
     LOGGER_INFO("BLE get audio control.");
     ServerControlAudioPacket *src = &packet->packet.serverControlAudio;
+    // BLE带宽仅支持48000Hz/16bit/单声道,收到更高格式时收敛(未来支持立体声)
+    if (config::status.rf.mode == RF_MODE_BLE &&
+        (src->channel != AUDIO_CHANNEL_SINGLE || src->rate != AUDIO_RATE_48000 || src->bit != AUDIO_BIT_16))
+    {
+      LOGGER_WARN("BLE mode only supports 48000Hz/16bit/mono, clamped from %luHz/%ubit/%uch.",
+                  static_cast<unsigned long>(src->rate), static_cast<unsigned int>(src->bit),
+                  static_cast<unsigned int>(src->channel));
+      src->channel = AUDIO_CHANNEL_SINGLE;
+      src->rate = AUDIO_RATE_48000;
+      src->bit = AUDIO_BIT_16;
+    }
     if (config::status.audio.channel != src->channel ||
         config::status.audio.rate != src->rate ||
         config::status.audio.bit != src->bit)
@@ -1050,6 +1073,9 @@ static void rf_handle(void *arg)
   uint32_t wifiSendFail = 0;
   uint32_t wifiSentPayload = 0;
   uint32_t wifiMaxBatchUs = 0;
+  uint32_t bleSendOk = 0;
+  uint32_t bleSendFail = 0;
+  uint32_t bleSentPayload = 0;
 #endif
 
   TickType_t xLastWakeTime = xTaskGetTickCount();
@@ -1073,7 +1099,20 @@ static void rf_handle(void *arg)
           for (int part = 0; part < size; part++)
           {
             Packet *packet = bleSendBuffer[part];
-            ble_send((uint8_t *)packet, PACKET_BLE_AUDIO_HEAD_SIZE + packet->packet.audioDataBLE.size);
+            const bool sent = ble_send((uint8_t *)packet, PACKET_BLE_AUDIO_HEAD_SIZE + packet->packet.audioDataBLE.size);
+#ifdef BUILD_DEBUG
+            if (sent)
+            {
+              bleSendOk++;
+              bleSentPayload += packet->packet.audioDataBLE.size;
+            }
+            else
+            {
+              bleSendFail++;
+            }
+#else
+            (void)sent;
+#endif
           }
           if (bleSendBuffer != NULL)
           {
@@ -1192,35 +1231,47 @@ static void rf_handle(void *arg)
           } while (netbuf_next(wifiReceiveBuffer) >= 0);
           netbuf_delete(wifiReceiveBuffer);
         }
-#ifdef BUILD_DEBUG
-        if (millis() - wifiReportTime >= 1000)
-        {
-          wifiReportTime = millis();
-          AudioTxBufferDebugStats bufferStats = {};
-          audio::buffer::getWiFiDebugStats(bufferStats);
-          wifi_ap_record_t apInfo = {};
-          const int32_t rssi = esp_wifi_sta_get_ap_info(&apInfo) == ESP_OK ? apInfo.rssi : 0;
-          RfDebugSnapshot snapshot = {};
-          snapshot.ready = true;
-          snapshot.buffer = bufferStats;
-          snapshot.sent_parts = wifiSendOk;
-          snapshot.sent_payload = wifiSentPayload;
-          snapshot.send_fail = wifiSendFail;
-          snapshot.max_batch_us = wifiMaxBatchUs;
-          snapshot.rssi = rssi;
-          portENTER_CRITICAL(&rf_debug_mux);
-          rf_debug_snapshot = snapshot;
-          portEXIT_CRITICAL(&rf_debug_mux);
-          wifiSendOk = 0;
-          wifiSendFail = 0;
-          wifiSentPayload = 0;
-          wifiMaxBatchUs = 0;
-        }
-#endif
       }
       break;
     }
     }
+
+#ifdef BUILD_DEBUG
+    // 每秒汇总一次发送统计(BLE与WiFi共用,当前未激活的一侧计数为零)
+    if (millis() - wifiReportTime >= 1000)
+    {
+      wifiReportTime = millis();
+      AudioTxBufferDebugStats bufferStats = {};
+      audio::buffer::getWiFiDebugStats(bufferStats);
+      wifi_ap_record_t apInfo = {};
+      const int32_t rssi = (config::status.rf.mode == RF_MODE_WIFI && wifi_is_connected() &&
+                            esp_wifi_sta_get_ap_info(&apInfo) == ESP_OK)
+                               ? apInfo.rssi
+                               : 0;
+      RfDebugSnapshot snapshot = {};
+      snapshot.ready = true;
+      snapshot.ble_mode = config::status.rf.mode == RF_MODE_BLE;
+      snapshot.buffer = bufferStats;
+      snapshot.sent_parts = wifiSendOk;
+      snapshot.sent_payload = wifiSentPayload;
+      snapshot.send_fail = wifiSendFail;
+      snapshot.max_batch_us = wifiMaxBatchUs;
+      snapshot.rssi = rssi;
+      snapshot.ble_parts = bleSendOk;
+      snapshot.ble_payload = bleSentPayload;
+      snapshot.ble_fail = bleSendFail;
+      portENTER_CRITICAL(&rf_debug_mux);
+      rf_debug_snapshot = snapshot;
+      portEXIT_CRITICAL(&rf_debug_mux);
+      wifiSendOk = 0;
+      wifiSendFail = 0;
+      wifiSentPayload = 0;
+      wifiMaxBatchUs = 0;
+      bleSendOk = 0;
+      bleSendFail = 0;
+      bleSentPayload = 0;
+    }
+#endif
   }
 }
 
