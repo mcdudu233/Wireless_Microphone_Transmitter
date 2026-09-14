@@ -995,6 +995,13 @@ static void rf_handle(void *arg)
   netbuf **wifiSendBuffer = NULL;
   // 定时发送设备状态
   uint16_t statusNumber = 0;
+#ifdef BUILD_DEBUG
+  uint32_t wifiReportTime = millis();
+  uint32_t wifiSendOk = 0;
+  uint32_t wifiSendFail = 0;
+  uint32_t wifiSentPayload = 0;
+  uint32_t wifiMaxBatchUs = 0;
+#endif
 
   TickType_t xLastWakeTime = xTaskGetTickCount();
   const TickType_t xFrequency = pdMS_TO_TICKS(TASK_RF_PERIOD);
@@ -1056,10 +1063,46 @@ static void rf_handle(void *arg)
         if (config::status.audio.start)
         {
           uint8_t size = audio::buffer::getWiFiPacketFront(&wifiSendBuffer);
+#ifdef BUILD_DEBUG
+          const uint32_t batchStartUs = micros();
+#endif
           for (int part = 0; part < size; part++)
           {
-            wifi_send(wifiSendBuffer[part]);
+            void *packetData = nullptr;
+            uint16_t packetLength = 0;
+            if (wifiSendBuffer[part] != nullptr)
+            {
+              netbuf_data(wifiSendBuffer[part], &packetData, &packetLength);
+            }
+            const uint16_t payloadSize = packetData != nullptr && packetLength >= PACKET_WIFI_AUDIO_HEAD_SIZE
+                                             ? reinterpret_cast<Packet *>(packetData)->packet.audioDataWiFi.size
+                                             : 0;
+            const bool sent = wifi_send(wifiSendBuffer[part]);
+#ifdef BUILD_DEBUG
+            if (sent)
+            {
+              wifiSendOk++;
+              wifiSentPayload += payloadSize;
+            }
+            else
+            {
+              wifiSendFail++;
+            }
+#else
+            (void)payloadSize;
+            (void)sent;
+#endif
           }
+#ifdef BUILD_DEBUG
+          if (size > 0)
+          {
+            const uint32_t batchUs = micros() - batchStartUs;
+            if (batchUs > wifiMaxBatchUs)
+            {
+              wifiMaxBatchUs = batchUs;
+            }
+          }
+#endif
           if (wifiSendBuffer != NULL)
           {
             free(wifiSendBuffer);
@@ -1100,6 +1143,26 @@ static void rf_handle(void *arg)
           } while (netbuf_next(wifiReceiveBuffer) >= 0);
           netbuf_delete(wifiReceiveBuffer);
         }
+#ifdef BUILD_DEBUG
+        if (millis() - wifiReportTime >= 1000)
+        {
+          wifiReportTime = millis();
+          AudioTxBufferDebugStats bufferStats = {};
+          audio::buffer::getWiFiDebugStats(bufferStats);
+          wifi_ap_record_t apInfo = {};
+          const int32_t rssi = esp_wifi_sta_get_ap_info(&apInfo) == ESP_OK ? apInfo.rssi : 0;
+          LOGGER_INFO("Audio TX WiFi frames=%lu skipped=%lu parts=%lu payload=%lu sent_parts=%lu sent_payload=%lu send_fail=%lu alloc_fail=%lu max_batch_us=%lu rssi=%ld",
+                      static_cast<unsigned long>(bufferStats.frames), static_cast<unsigned long>(bufferStats.skipped_frames),
+                      static_cast<unsigned long>(bufferStats.parts), static_cast<unsigned long>(bufferStats.payload_bytes),
+                      static_cast<unsigned long>(wifiSendOk), static_cast<unsigned long>(wifiSentPayload),
+                      static_cast<unsigned long>(wifiSendFail), static_cast<unsigned long>(bufferStats.allocation_errors),
+                      static_cast<unsigned long>(wifiMaxBatchUs), static_cast<long>(rssi));
+          wifiSendOk = 0;
+          wifiSendFail = 0;
+          wifiSentPayload = 0;
+          wifiMaxBatchUs = 0;
+        }
+#endif
       }
       break;
     }

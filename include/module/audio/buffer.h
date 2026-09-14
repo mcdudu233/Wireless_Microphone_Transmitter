@@ -15,6 +15,17 @@ struct AudioData
   uint8_t data[AUDIO_BUFFER_MAX_DATA_SIZE];
 };
 
+#ifdef BUILD_DEBUG
+struct AudioTxBufferDebugStats
+{
+  uint32_t frames;
+  uint32_t skipped_frames;
+  uint32_t parts;
+  uint32_t payload_bytes;
+  uint32_t allocation_errors;
+};
+#endif
+
 namespace audio::buffer
 {
   void setup();
@@ -45,4 +56,9 @@ namespace audio::buffer
   /* 读取BLE数据 */
   // 获取目前的音频数据包分包
   uint8_t getBLEPacketFront(Packet ***buffers);
+
+#ifdef BUILD_DEBUG
+  // 读取并清零WiFi音频分包统计。
+  void getWiFiDebugStats(AudioTxBufferDebugStats &stats);
+#endif
 }

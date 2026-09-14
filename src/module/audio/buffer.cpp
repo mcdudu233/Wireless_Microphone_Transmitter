@@ -6,6 +6,10 @@ static AudioData *data;
 static uint8_t data_pointer;
 static uint32_t data_number;
 
+#ifdef BUILD_DEBUG
+static AudioTxBufferDebugStats wifi_debug_stats = {};
+#endif
+
 uint8_t *audio::buffer::getWritePointer(uint32_t packet_size)
 {
   // 写入空闲槽位但暂不推进指针(此时包对读取端不可见),
@@ -70,8 +74,6 @@ uint8_t audio::buffer::getWiFiPacketFront(netbuf ***buffers)
   AudioData *audio = getAudioDataFront();
   if (audio->num > wifiLastNumber)
   {
-    wifiLastNumber = audio->num; // 已发送
-
     uint8_t part_max = (audio->size + PACKET_WIFI_AUDIO_DATA_MAX_SIZE - 1) /
                        PACKET_WIFI_AUDIO_DATA_MAX_SIZE;
     if (part_max == 0)
@@ -81,6 +83,9 @@ uint8_t audio::buffer::getWiFiPacketFront(netbuf ***buffers)
     *buffers = (netbuf **)malloc(sizeof(netbuf *) * part_max);
     if (*buffers == NULL)
     {
+#ifdef BUILD_DEBUG
+      wifi_debug_stats.allocation_errors++;
+#endif
       LOGGER_WARN("Socket (netbuf **) malloc failed!");
       return 0;
     }
@@ -104,6 +109,9 @@ uint8_t audio::buffer::getWiFiPacketFront(netbuf ***buffers)
       buffer = netbuf_new();
       if (buffer == NULL)
       {
+#ifdef BUILD_DEBUG
+        wifi_debug_stats.allocation_errors++;
+#endif
         // 释放之前已分配的资源
         for (uint8_t i = 0; i < part; i++)
         {
@@ -120,6 +128,9 @@ uint8_t audio::buffer::getWiFiPacketFront(netbuf ***buffers)
       Packet *packet = (Packet *)netbuf_alloc(buffer, PACKET_WIFI_AUDIO_HEAD_SIZE + part_size);
       if (packet == NULL)
       {
+#ifdef BUILD_DEBUG
+        wifi_debug_stats.allocation_errors++;
+#endif
         // 释放当前buffer
         netbuf_delete((*buffers)[part]);
         // 释放之前已分配的buffers
@@ -138,6 +149,16 @@ uint8_t audio::buffer::getWiFiPacketFront(netbuf ***buffers)
       packet->packet.audioDataWiFi.part = part;
       memcpy(packet->packet.audioDataWiFi.data, audio->data + PACKET_WIFI_AUDIO_DATA_MAX_SIZE * part, part_size);
     }
+#ifdef BUILD_DEBUG
+    if (wifiLastNumber != 0 && audio->num > wifiLastNumber + 1)
+    {
+      wifi_debug_stats.skipped_frames += audio->num - wifiLastNumber - 1;
+    }
+    wifi_debug_stats.frames++;
+    wifi_debug_stats.parts += part_max;
+    wifi_debug_stats.payload_bytes += audio->size;
+#endif
+    wifiLastNumber = audio->num; // 完整分包成功后才标记，分配失败可在下一轮重试。
     return part_max;
   }
   else
@@ -145,6 +166,14 @@ uint8_t audio::buffer::getWiFiPacketFront(netbuf ***buffers)
     return 0;
   }
 }
+
+#ifdef BUILD_DEBUG
+void audio::buffer::getWiFiDebugStats(AudioTxBufferDebugStats &stats)
+{
+  stats = wifi_debug_stats;
+  wifi_debug_stats = {};
+}
+#endif
 
 static uint32_t bleLastNumber = 0;
 uint8_t audio::buffer::getBLEPacketFront(Packet ***buffers)
@@ -220,6 +249,9 @@ void audio::buffer::restart()
   data_number = 0;
   wifiLastNumber = 0;
   bleLastNumber = 0;
+#ifdef BUILD_DEBUG
+  wifi_debug_stats = {};
+#endif
 }
 
 void audio::buffer::setup()
