@@ -65,6 +65,32 @@ static esp_ae_ch_cvt_handle_t ch_cvt_handle = NULL;
 static bool powerOn = false;
 
 #ifdef BUILD_DEBUG
+static void logI2SClock(i2s_chan_handle_t handle, uint32_t requested_rate, uint32_t mclk_multiple)
+{
+  i2s_chan_info_t info = {};
+  i2s_tuning_info_t tuning = {};
+  const esp_err_t info_result = i2s_channel_get_info(handle, &info);
+  const esp_err_t tuning_result = i2s_channel_tune_rate(handle, nullptr, &tuning);
+  if (info_result != ESP_OK || tuning_result != ESP_OK || mclk_multiple == 0)
+  {
+    LOGGER_INFO("Audio Encoder I2S clock query failed: info=%s tuning=%s",
+                esp_err_to_name(info_result), esp_err_to_name(tuning_result));
+    return;
+  }
+
+  const uint64_t effective_millihz = static_cast<uint64_t>(tuning.curr_mclk_hz) * 1000ULL / mclk_multiple;
+  LOGGER_INFO("Audio Encoder I2S clock requested=%luHz source=%u sclk=%lu mclk=%ld bclk=%lu effective=%lu.%03luHz dma=%lu water=%lu%%",
+              static_cast<unsigned long>(requested_rate), static_cast<unsigned int>(info.clk_src),
+              static_cast<unsigned long>(info.sclk_hz), static_cast<long>(tuning.curr_mclk_hz),
+              static_cast<unsigned long>(info.bclk_hz),
+              static_cast<unsigned long>(effective_millihz / 1000ULL),
+              static_cast<unsigned long>(effective_millihz % 1000ULL),
+              static_cast<unsigned long>(info.total_dma_buf_size),
+              static_cast<unsigned long>(tuning.water_mark));
+}
+#endif
+
+#ifdef BUILD_DEBUG
 struct RawPcmStats
 {
   uint32_t left_peak;
@@ -177,6 +203,9 @@ static void audioHandle(void *arg)
   uint32_t read_errors = 0;
   uint32_t process_errors = 0;
   uint32_t process_max_us = 0;
+  uint32_t read_wait_total_us = 0;
+  uint32_t read_wait_max_us = 0;
+  uint32_t read_calls = 0;
 #endif
 
   TickType_t xLastWakeTime = xTaskGetTickCount();
@@ -190,7 +219,19 @@ static void audioHandle(void *arg)
     {
       size = (uint32_t)i2s_rate / 1000 * AUDIO_ENCODER_POLLING_CYCLE * AUDIO_ENCODER_BIT / 8 * AUDIO_ENCODER_CHANNEL;
       bytes_read = 0;
+#ifdef BUILD_DEBUG
+      const uint32_t read_start_us = micros();
+#endif
       ret = i2s_channel_read(i2s_rx_handle, i2s_data1, size, &bytes_read, pdMS_TO_TICKS(AUDIO_ENCODER_POLLING_CYCLE * 2));
+#ifdef BUILD_DEBUG
+      const uint32_t read_wait_us = micros() - read_start_us;
+      read_wait_total_us += read_wait_us;
+      read_calls++;
+      if (read_wait_us > read_wait_max_us)
+      {
+        read_wait_max_us = read_wait_us;
+      }
+#endif
       if (ret == ESP_OK && bytes_read > 0)
       {
         size = bytes_read;
@@ -385,14 +426,18 @@ static void audioHandle(void *arg)
       const int32_t right_dc = raw_stats.sample_pairs > 0 ? raw_stats.right_sum / raw_stats.sample_pairs : 0;
       const uint32_t raw_samples = raw_stats.sample_pairs * AUDIO_ENCODER_CHANNEL;
       const uint32_t zero_permille = raw_samples > 0 ? raw_stats.zero_samples * 1000U / raw_samples : 0;
-      LOGGER_INFO("Audio capture on=%u mode=%u gain=%d raw_l_peak=%lu raw_r_peak=%lu raw_l_dc=%ld raw_r_dc=%ld zero=%lu.%lu%% clip=%lu output_peak=%lu frames=%lu bytes=%lu read_errors=%lu process_errors=%lu process_max_us=%lu",
+      const int32_t auto_gain_tenths = static_cast<int32_t>(auto_gain * 10.0f);
+      LOGGER_INFO("Audio capture on=%u mode=%u gain=%d agc_gain=%ld.%01lddB raw_l_peak=%lu raw_r_peak=%lu raw_l_dc=%ld raw_r_dc=%ld zero=%lu.%lu%% clip=%lu output_peak=%lu frames=%lu bytes=%lu read_errors=%lu read_avg_us=%lu read_max_us=%lu process_errors=%lu process_max_us=%lu",
                    powerOn ? 1U : 0U, static_cast<unsigned int>(i2s_mode), static_cast<int>(i2s_gain),
+                   static_cast<long>(auto_gain_tenths / 10), static_cast<long>(labs(auto_gain_tenths % 10)),
                    static_cast<unsigned long>(raw_stats.left_peak), static_cast<unsigned long>(raw_stats.right_peak),
                    static_cast<long>(left_dc), static_cast<long>(right_dc),
                    static_cast<unsigned long>(zero_permille / 10U), static_cast<unsigned long>(zero_permille % 10U),
                    static_cast<unsigned long>(raw_stats.clipped_samples), static_cast<unsigned long>(output_peak),
                    static_cast<unsigned long>(frames_read), static_cast<unsigned long>(bytes_sent),
-                   static_cast<unsigned long>(read_errors), static_cast<unsigned long>(process_errors),
+                   static_cast<unsigned long>(read_errors),
+                   static_cast<unsigned long>(read_calls > 0 ? read_wait_total_us / read_calls : 0),
+                   static_cast<unsigned long>(read_wait_max_us), static_cast<unsigned long>(process_errors),
                    static_cast<unsigned long>(process_max_us));
       raw_stats = {};
       output_peak = 0;
@@ -401,6 +446,9 @@ static void audioHandle(void *arg)
       read_errors = 0;
       process_errors = 0;
       process_max_us = 0;
+      read_wait_total_us = 0;
+      read_wait_max_us = 0;
+      read_calls = 0;
     }
 #endif
   }
@@ -476,6 +524,10 @@ void audio::encoder::on(AudioChannel channel, AudioRate rate, AudioBit bit, Audi
     audio::power::off();
     return;
   }
+#ifdef BUILD_DEBUG
+  logI2SClock(i2s_rx_handle, static_cast<uint32_t>(i2s_rate),
+              static_cast<uint32_t>(I2S_MCLK_MULTIPLE_256));
+#endif
   // 启动增益模块
   esp_ae_alc_cfg_t alc_cfg = {
       .sample_rate = (uint32_t)rate,
