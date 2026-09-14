@@ -273,11 +273,14 @@ static void audioHandle(void *arg)
   uint32_t read_calls = 0;
 #endif
 
-  TickType_t xLastWakeTime = xTaskGetTickCount();
-  const TickType_t xFrequency = pdMS_TO_TICKS(TASK_AUDIO_ENCODER_PERIOD);
   while (true)
   {
-    xTaskDelayUntil(&xLastWakeTime, xFrequency);
+    // 开启后由I2S DMA的阻塞读取定节拍，并在任务短暂延迟后连续取走已积压的DMA数据。
+    // 固定4ms系统延时会错过追赶机会，最终让发送帧率低于硬件采样率。
+    if (!powerOn)
+    {
+      vTaskDelay(pdMS_TO_TICKS(TASK_AUDIO_ENCODER_PERIOD));
+    }
 
     // 启动了芯片才读取数据
     if (powerOn)

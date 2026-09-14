@@ -61,9 +61,10 @@ static void rfDebugHandle(void *arg)
     portEXIT_CRITICAL(&rf_debug_mux);
     if (snapshot.ready)
     {
-      LOGGER_INFO("Audio TX WiFi frames=%lu skipped=%lu parts=%lu payload=%lu sent_parts=%lu sent_payload=%lu send_fail=%lu alloc_fail=%lu max_batch_us=%lu rssi=%ld",
+      LOGGER_INFO("Audio TX WiFi frames=%lu skipped=%lu backlog_max=%lu parts=%lu payload=%lu sent_parts=%lu sent_payload=%lu send_fail=%lu alloc_fail=%lu max_batch_us=%lu rssi=%ld",
                   static_cast<unsigned long>(snapshot.buffer.frames),
                   static_cast<unsigned long>(snapshot.buffer.skipped_frames),
+                  static_cast<unsigned long>(snapshot.buffer.max_backlog),
                   static_cast<unsigned long>(snapshot.buffer.parts),
                   static_cast<unsigned long>(snapshot.buffer.payload_bytes),
                   static_cast<unsigned long>(snapshot.sent_parts),

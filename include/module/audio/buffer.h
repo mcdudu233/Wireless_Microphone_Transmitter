@@ -6,7 +6,8 @@
 #include "lwip/api.h"
 
 #define AUDIO_BUFFER_MAX_DATA_SIZE (AUDIO_ENCODER_RATE * AUDIO_ENCODER_BIT * AUDIO_ENCODER_CHANNEL / 8 * AUDIO_ENCODER_POLLING_CYCLE / 1000)
-#define AUDIO_BUFFER_MAX_BUFFER_SIZE 25
+// 发送端按序发送积压帧；使用PSRAM保留约400ms，吸收WiFi任务的短时阻塞。
+#define AUDIO_BUFFER_MAX_BUFFER_SIZE 100
 
 struct AudioData
 {
@@ -23,6 +24,7 @@ struct AudioTxBufferDebugStats
   uint32_t parts;
   uint32_t payload_bytes;
   uint32_t allocation_errors;
+  uint32_t max_backlog;
 };
 #endif
 

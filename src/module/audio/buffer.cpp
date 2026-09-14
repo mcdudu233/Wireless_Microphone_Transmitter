@@ -69,10 +69,36 @@ uint32_t audio::buffer::getNumber()
 }
 
 static uint32_t wifiLastNumber = 0;
+static bool wifiStarted = false;
 uint8_t audio::buffer::getWiFiPacketFront(netbuf ***buffers)
 {
-  AudioData *audio = getAudioDataFront();
-  if (audio->num > wifiLastNumber)
+  if (data_number == 0)
+  {
+    return 0;
+  }
+
+  AudioData *newest = getAudioDataFront();
+  AudioData *audio = newest;
+#ifdef BUILD_DEBUG
+  const uint32_t backlog = wifiStarted ? newest->num - wifiLastNumber : 1;
+  if (backlog > wifi_debug_stats.max_backlog)
+  {
+    wifi_debug_stats.max_backlog = backlog;
+  }
+#endif
+  if (wifiStarted)
+  {
+    audio = getAudioDataFromNumber(wifiLastNumber + 1);
+    if (audio == nullptr)
+    {
+#ifdef BUILD_DEBUG
+      wifi_debug_stats.skipped_frames += newest->num - wifiLastNumber - 1;
+#endif
+      audio = newest;
+    }
+  }
+
+  if (!wifiStarted || audio->num > wifiLastNumber)
   {
     uint8_t part_max = (audio->size + PACKET_WIFI_AUDIO_DATA_MAX_SIZE - 1) /
                        PACKET_WIFI_AUDIO_DATA_MAX_SIZE;
@@ -150,15 +176,12 @@ uint8_t audio::buffer::getWiFiPacketFront(netbuf ***buffers)
       memcpy(packet->packet.audioDataWiFi.data, audio->data + PACKET_WIFI_AUDIO_DATA_MAX_SIZE * part, part_size);
     }
 #ifdef BUILD_DEBUG
-    if (wifiLastNumber != 0 && audio->num > wifiLastNumber + 1)
-    {
-      wifi_debug_stats.skipped_frames += audio->num - wifiLastNumber - 1;
-    }
     wifi_debug_stats.frames++;
     wifi_debug_stats.parts += part_max;
     wifi_debug_stats.payload_bytes += audio->size;
 #endif
     wifiLastNumber = audio->num; // 完整分包成功后才标记，分配失败可在下一轮重试。
+    wifiStarted = true;
     return part_max;
   }
   else
@@ -248,6 +271,7 @@ void audio::buffer::restart()
   data_pointer = 0;
   data_number = 0;
   wifiLastNumber = 0;
+  wifiStarted = false;
   bleLastNumber = 0;
 #ifdef BUILD_DEBUG
   wifi_debug_stats = {};
