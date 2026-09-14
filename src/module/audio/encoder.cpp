@@ -63,9 +63,45 @@ static esp_ae_bit_cvt_handle_t bit_cvt_handle = NULL;
 static esp_ae_ch_cvt_handle_t ch_cvt_handle = NULL;
 
 static bool powerOn = false;
-static float auto_gain = AGC_GAIN_INITIAL;
 
 #ifdef BUILD_DEBUG
+struct RawPcmStats
+{
+  uint32_t left_peak;
+  uint32_t right_peak;
+  int64_t left_sum;
+  int64_t right_sum;
+  uint32_t sample_pairs;
+  uint32_t zero_samples;
+  uint32_t clipped_samples;
+};
+
+static void updateRawPcmStats(const uint32_t *pcm, size_t size, RawPcmStats &stats)
+{
+  const size_t sample_pairs = size / (sizeof(uint32_t) * AUDIO_ENCODER_CHANNEL);
+  for (size_t i = 0; i < sample_pairs; i++)
+  {
+    const int32_t left = static_cast<int32_t>(pcm[i * AUDIO_ENCODER_CHANNEL]);
+    const int32_t right = static_cast<int32_t>(pcm[i * AUDIO_ENCODER_CHANNEL + 1]);
+    const uint32_t left_magnitude = static_cast<uint32_t>(left < 0 ? -static_cast<int64_t>(left) : left);
+    const uint32_t right_magnitude = static_cast<uint32_t>(right < 0 ? -static_cast<int64_t>(right) : right);
+
+    if (left_magnitude > stats.left_peak)
+    {
+      stats.left_peak = left_magnitude;
+    }
+    if (right_magnitude > stats.right_peak)
+    {
+      stats.right_peak = right_magnitude;
+    }
+    stats.left_sum += left;
+    stats.right_sum += right;
+    stats.zero_samples += (left == 0) + (right == 0);
+    stats.clipped_samples += (left_magnitude >= 0x7F000000U) + (right_magnitude >= 0x7F000000U);
+  }
+  stats.sample_pairs += sample_pairs;
+}
+
 static uint32_t getPcmPeak(const uint8_t *pcm, size_t size, AudioBit bit)
 {
   uint32_t peak = 0;
@@ -127,18 +163,20 @@ static void audioHandle(void *arg)
   uint8_t *data;
   // 自动增益
   int32_t *auto_data;
+  float auto_gain = 0;
   const float auto_gain_target = pow10f(AGC_GAIN_TARGET / 20.0f);
   const float auto_gain_peak = pow10f(AGC_GAIN_PEAK / 20.0f);
   int32_t auto_peak = 0;
   uint32_t auto_avg = 0;
 #ifdef BUILD_DEBUG
   uint32_t level_log_time = millis();
-  uint32_t raw_peak = 0;
+  RawPcmStats raw_stats = {};
   uint32_t output_peak = 0;
   uint32_t frames_read = 0;
   uint32_t bytes_sent = 0;
   uint32_t read_errors = 0;
   uint32_t process_errors = 0;
+  uint32_t process_max_us = 0;
 #endif
 
   TickType_t xLastWakeTime = xTaskGetTickCount();
@@ -158,11 +196,8 @@ static void audioHandle(void *arg)
         size = bytes_read;
 #ifdef BUILD_DEBUG
         frames_read++;
-        const uint32_t frame_raw_peak = getPcmPeak(reinterpret_cast<const uint8_t *>(i2s_data1), size, AUDIO_BIT_32);
-        if (frame_raw_peak > raw_peak)
-        {
-          raw_peak = frame_raw_peak;
-        }
+        updateRawPcmStats(i2s_data1, size, raw_stats);
+        const uint32_t process_start_us = micros();
 #endif
         // read_len++;
         // if (millis() - last_time >= 1000)
@@ -316,6 +351,13 @@ static void audioHandle(void *arg)
         data = audio::buffer::getWritePointer(size);
         memcpy(data, output_data, size);
         audio::buffer::commitWrite();
+#ifdef BUILD_DEBUG
+        const uint32_t process_us = micros() - process_start_us;
+        if (process_us > process_max_us)
+        {
+          process_max_us = process_us;
+        }
+#endif
       }
       else if (ret == ESP_ERR_TIMEOUT)
       {
@@ -339,17 +381,26 @@ static void audioHandle(void *arg)
     if (millis() - level_log_time >= 1000)
     {
       level_log_time = millis();
-      LOGGER_INFO("Audio capture on=%u mode=%u gain=%d raw_peak=%lu output_peak=%lu frames=%lu bytes=%lu read_errors=%lu process_errors=%lu",
+      const int32_t left_dc = raw_stats.sample_pairs > 0 ? raw_stats.left_sum / raw_stats.sample_pairs : 0;
+      const int32_t right_dc = raw_stats.sample_pairs > 0 ? raw_stats.right_sum / raw_stats.sample_pairs : 0;
+      const uint32_t raw_samples = raw_stats.sample_pairs * AUDIO_ENCODER_CHANNEL;
+      const uint32_t zero_permille = raw_samples > 0 ? raw_stats.zero_samples * 1000U / raw_samples : 0;
+      LOGGER_INFO("Audio capture on=%u mode=%u gain=%d raw_l_peak=%lu raw_r_peak=%lu raw_l_dc=%ld raw_r_dc=%ld zero=%lu.%lu%% clip=%lu output_peak=%lu frames=%lu bytes=%lu read_errors=%lu process_errors=%lu process_max_us=%lu",
                    powerOn ? 1U : 0U, static_cast<unsigned int>(i2s_mode), static_cast<int>(i2s_gain),
-                   static_cast<unsigned long>(raw_peak), static_cast<unsigned long>(output_peak),
+                   static_cast<unsigned long>(raw_stats.left_peak), static_cast<unsigned long>(raw_stats.right_peak),
+                   static_cast<long>(left_dc), static_cast<long>(right_dc),
+                   static_cast<unsigned long>(zero_permille / 10U), static_cast<unsigned long>(zero_permille % 10U),
+                   static_cast<unsigned long>(raw_stats.clipped_samples), static_cast<unsigned long>(output_peak),
                    static_cast<unsigned long>(frames_read), static_cast<unsigned long>(bytes_sent),
-                   static_cast<unsigned long>(read_errors), static_cast<unsigned long>(process_errors));
-      raw_peak = 0;
+                   static_cast<unsigned long>(read_errors), static_cast<unsigned long>(process_errors),
+                   static_cast<unsigned long>(process_max_us));
+      raw_stats = {};
       output_peak = 0;
       frames_read = 0;
       bytes_sent = 0;
       read_errors = 0;
       process_errors = 0;
+      process_max_us = 0;
     }
 #endif
   }
@@ -375,16 +426,17 @@ void audio::encoder::on(AudioChannel channel, AudioRate rate, AudioBit bit, Audi
     off();
   }
 
+  // 启动电源
+  if (!audio::power::isOn())
+  {
+    audio::power::on();
+  }
+
   i2s_channel = channel;
   i2s_rate = rate;
   i2s_bit = bit;
   i2s_mode = mode;
   i2s_gain = gain;
-  auto_gain = (gain > AGC_GAIN_INITIAL) ? (float)gain : AGC_GAIN_INITIAL;
-
-  // PCM1822要求上电前模式脚已经稳定，电源稳定后才能送BCLK/FSYNC。
-  digitalWrite(AUDIO_ENCODER_MD0, HIGH);
-  digitalWrite(AUDIO_ENCODER_MD1, LOW);
 
   i2s_std_config_t std_cfg = {
       .clk_cfg = {
@@ -415,11 +467,6 @@ void audio::encoder::on(AudioChannel channel, AudioRate rate, AudioBit bit, Audi
     return;
   }
 
-  if (!audio::power::isOn())
-  {
-    audio::power::on();
-  }
-
   i2s_result = i2s_channel_enable(i2s_rx_handle);
   if (i2s_result != ESP_OK)
   {
@@ -436,9 +483,8 @@ void audio::encoder::on(AudioChannel channel, AudioRate rate, AudioBit bit, Audi
       .bits_per_sample = I2S_DATA_BIT_WIDTH_32BIT,
   };
   esp_ae_alc_open(&alc_cfg, &alc_handle);
-  const int8_t initial_gain = (mode == AUDIO_MODE_AUTO) ? (int8_t)auto_gain : gain;
-  esp_ae_alc_set_gain(alc_handle, 0, initial_gain);
-  esp_ae_alc_set_gain(alc_handle, 1, initial_gain);
+  esp_ae_alc_set_gain(alc_handle, 0, gain);
+  esp_ae_alc_set_gain(alc_handle, 1, gain);
   // 启动通道转换
   if (channel == AUDIO_CHANNEL_SINGLE)
   {
