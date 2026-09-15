@@ -198,7 +198,7 @@ static uint32_t bleLastNumber = 0;
 static bool bleStarted = false;
 uint8_t audio::buffer::getBLEPacketFront(Packet ***buffers)
 {
-  if (data_number == 0)
+  if (!data_present)
   {
     return 0;
   }
@@ -215,7 +215,7 @@ uint8_t audio::buffer::getBLEPacketFront(Packet ***buffers)
     }
   }
 
-  if (!bleStarted || audio->num > bleLastNumber)
+  if (!bleStarted || (int32_t)(audio->num - bleLastNumber) > 0) // 回绕安全的序号比较
   {
     uint8_t part_max = audio->size / PACKET_BLE_AUDIO_DATA_MAX_SIZE;
     if (audio->size % PACKET_BLE_AUDIO_DATA_MAX_SIZE != 0)
@@ -289,6 +289,7 @@ void audio::buffer::restart()
   }
   data_pointer = 0;
   data_number = 0;
+  data_present = false;
   wifiLastNumber = 0;
   wifiStarted = false;
   bleLastNumber = 0;

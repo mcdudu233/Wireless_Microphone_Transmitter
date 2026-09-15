@@ -905,6 +905,26 @@ bool ble_send(const uint8_t *data, uint16_t len)
 }
 /****************************/
 
+// 打开指定射频模式(模式切换与切换失败回退共用)
+static bool rf_open_mode(RFMode mode)
+{
+  switch (mode)
+  {
+  case RF_MODE_BLE:
+  {
+    return ble_open();
+  }
+  case RF_MODE_WIFI:
+  {
+    return wifi_open(config::status.rf.ssid, config::status.rf.password);
+  }
+  default:
+  {
+    return false;
+  }
+  }
+}
+
 // 解析数据包
 static bool rf_receive_packet(const uint8_t *data, size_t len)
 {
@@ -941,18 +961,19 @@ static bool rf_receive_packet(const uint8_t *data, size_t len)
     {
       strcpy(config::status.rf.password, src->password);
     }
-    // 射频模式改变
+    // 射频模式改变(BLE与WiFi绝不同时运行:先关旧协议栈再开新协议栈,避免IRAM被同时占满)
     if (config::status.rf.mode != src->mode)
     {
+      const RFMode oldMode = config::status.rf.mode;
       // 先关闭原来的射频
-      switch (config::status.rf.mode)
+      switch (oldMode)
       {
       case RF_MODE_BLE:
       {
         if (!ble_close())
         {
-          // TODO: 失败发送给接收端
-          return false;
+          LOGGER_WARN("RF switch aborted, BLE close failed.");
+          return false; // 旧协议栈仍在运行,保持原模式
         }
         break;
       }
@@ -960,33 +981,29 @@ static bool rf_receive_packet(const uint8_t *data, size_t len)
       {
         if (!wifi_close())
         {
-          // TODO: 失败发送给接收端
-          return false;
+          LOGGER_WARN("RF switch aborted, WiFi close failed.");
+          return false; // 旧协议栈仍在运行,保持原模式
         }
         break;
       }
+      default:
+      {
+        return false;
       }
-      // 开启新的射频模式
-      switch (src->mode)
+      }
+      // 再开启新的射频模式
+      if (!rf_open_mode(src->mode))
       {
-      case RF_MODE_BLE:
-      {
-        if (!ble_open())
+        // 新模式启动失败(如WiFi连接不上):回退旧模式,保证设备始终保有可用射频
+        LOGGER_WARN("RF open mode %u failed, rolling back to mode %u.",
+                    static_cast<unsigned int>(src->mode), static_cast<unsigned int>(oldMode));
+        if (!rf_open_mode(oldMode))
         {
-          // TODO: 失败发送给接收端
-          return false;
+          // 回退也失败:两个协议栈都不可用,重启恢复到默认BLE模式
+          LOGGER_ERROR("RF rollback failed, restarting to recover.");
+          power::core_restart();
         }
-        break;
-      }
-      case RF_MODE_WIFI:
-      {
-        if (!wifi_open(config::status.rf.ssid, config::status.rf.password))
-        {
-          // TODO: 失败发送给接收端
-          return false;
-        }
-        break;
-      }
+        return false;
       }
       config::status.rf.mode = src->mode;
     }
