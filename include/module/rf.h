@@ -10,7 +10,8 @@
 #define BLE_PACKET_LENGTH 251
 #define BLE_PACKET_TIME 2120
 #define BLE_L2CAP_PSM 0x1001
-#define BLE_L2CAP_MTU 512
+// COC MTU决定初始信用数(=ceil(MTU/MPS),MPS=504):512只有2个信用,余量不足
+#define BLE_L2CAP_MTU 1024
 // WiFi
 #define WIFI_RETRY 5
 #define WIFI_CONNECTED_BIT BIT0

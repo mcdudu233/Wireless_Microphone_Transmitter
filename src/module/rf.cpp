@@ -512,6 +512,7 @@ extern "C" void ble_store_config_init(void);
 static bool bleIsOpen = false;
 static bool bleIsClosing = false;
 static bool bleIsAdvertising = false;
+static bool bleChannelBusy = false; // 通道上暂挂着未发完的SDU,等COC_TX_UNSTALLED
 static uint16_t bleConnectionHandle = 0;
 static ble_l2cap_chan *bleChannel = NULL;
 // 蓝牙接收队列，避免在 NimBLE 回调和 RF 任务之间共享 STL 容器。
@@ -545,6 +546,7 @@ static int ble_l2cap_handler(struct ble_l2cap_event *event, void *arg)
       if (chan_info.psm == BLE_L2CAP_PSM)
       {
         bleChannel = event->connect.chan;
+        bleChannelBusy = false;
         LOGGER_INFO("BLE channel connected.");
       }
     }
@@ -568,7 +570,19 @@ static int ble_l2cap_handler(struct ble_l2cap_event *event, void *arg)
     if (chan_info.psm == BLE_L2CAP_PSM)
     {
       bleChannel = NULL;
+      bleChannelBusy = false;
       LOGGER_INFO("BLE channel disconnected.");
+    }
+    break;
+  }
+
+  // 暂挂SDU续发完成事件(信用回充后栈自动发完挂起的数据)
+  case BLE_L2CAP_EVENT_COC_TX_UNSTALLED:
+  {
+    bleChannelBusy = false;
+    if (event->tx_unstalled.status != 0)
+    {
+      LOGGER_WARN("BLE tx unstalled with error: %d", event->tx_unstalled.status);
     }
     break;
   }
@@ -924,14 +938,27 @@ bool ble_send(const uint8_t *data, uint16_t len)
   }
 
   int rc = ble_l2cap_send(bleChannel, om);
-  if (rc != 0)
+  if (rc == 0 || rc == BLE_HS_ESTALLED)
   {
-    LOGGER_WARN("BLE failed to send data: %d", rc);
+    // 0=已全部发出;ESTALLED=栈已接管SDU(挂在通道上等对端信用,回充后自动续发),
+    // 两种情况下mbuf均归栈所有,不得释放,均视为发送成功
+    if (rc == BLE_HS_ESTALLED)
+    {
+      // 通道暂挂:收到COC_TX_UNSTALLED事件前不再投递新SDU
+      bleChannelBusy = true;
+    }
+    return true;
+  }
+  if (rc == BLE_HS_EBUSY || rc == BLE_HS_EBADDATA)
+  {
+    // 通道上仍有未发完的SDU或载荷超限,本次SDU未被栈接收,缓冲仍归调用方
+    bleChannelBusy = true;
     os_mbuf_free_chain(om);
     return false;
   }
-
-  return true;
+  // 其余错误(如ENOMEM)路径中栈已自行释放SDU,不得重复释放
+  LOGGER_WARN("BLE failed to send data: %d", rc);
+  return false;
 }
 /****************************/
 
@@ -1144,49 +1171,52 @@ static void rf_handle(void *arg)
       /* 处理 BLE 模块 */
       if (bleIsOpen && bleChannel != NULL)
       {
-        /* 发送 */
-        if (config::status.audio.start)
+        /* 发送(通道暂挂期间跳过,等COC_TX_UNSTALLED通知后再投递,避免EBUSY风暴) */
+        if (!bleChannelBusy)
         {
-          uint8_t size = audio::buffer::getBLEPacketFront(&bleSendBuffer);
-          bool allSent = size > 0;
-          for (int part = 0; part < size; part++)
+          if (config::status.audio.start)
           {
-            Packet *packet = bleSendBuffer[part];
-            const bool sent = ble_send((uint8_t *)packet, PACKET_BLE_AUDIO_HEAD_SIZE + packet->packet.audioDataBLE.size);
+            uint8_t size = audio::buffer::getBLEPacketFront(&bleSendBuffer);
+            bool allSent = size > 0;
+            for (int part = 0; part < size; part++)
+            {
+              Packet *packet = bleSendBuffer[part];
+              const bool sent = ble_send((uint8_t *)packet, PACKET_BLE_AUDIO_HEAD_SIZE + packet->packet.audioDataBLE.size);
 #ifdef BUILD_DEBUG
-            if (sent)
-            {
-              bleSendOk++;
-              bleSentPayload += packet->packet.audioDataBLE.size;
-            }
-            else
-            {
-              bleSendFail++;
-            }
+              if (sent)
+              {
+                bleSendOk++;
+                bleSentPayload += packet->packet.audioDataBLE.size;
+              }
+              else
+              {
+                bleSendFail++;
+              }
 #endif
-            allSent = allSent && sent;
+              allSent = allSent && sent;
+            }
+            // 全部分片发送成功才推进进度;失败的帧下一轮整帧重发,避免丢帧产生爆音
+            if (allSent)
+            {
+              audio::buffer::setBLEPacketSent(bleSendBuffer[0]->packet.audioDataBLE.number);
+            }
+            if (bleSendBuffer != NULL)
+            {
+              free(bleSendBuffer);
+              bleSendBuffer = NULL;
+            }
           }
-          // 全部分片发送成功才推进进度;失败的帧下一轮整帧重发,避免丢帧产生爆音
-          if (allSent)
+          if (statusNumber++ >= RF_CLIENT_STATUS_PERIOD)
           {
-            audio::buffer::setBLEPacketSent(bleSendBuffer[0]->packet.audioDataBLE.number);
+            // 发送状态包
+            Packet *packet = (Packet *)malloc(PACKET_CLIENT_STATUS_SIZE);
+            packet->type = PACKET_TYPE_CLIENT_STATUS;
+            packet->packet.clientStatus.status = PACKET_CLIENT_STATUS_OK;
+            packet->packet.clientStatus.battery = (uint8_t)power::getBATPercent();
+            ble_send((uint8_t *)packet, PACKET_CLIENT_STATUS_SIZE);
+            free(packet);
+            statusNumber = 0;
           }
-          if (bleSendBuffer != NULL)
-          {
-            free(bleSendBuffer);
-            bleSendBuffer = NULL;
-          }
-        }
-        if (statusNumber++ >= RF_CLIENT_STATUS_PERIOD)
-        {
-          // 发送状态包
-          Packet *packet = (Packet *)malloc(PACKET_CLIENT_STATUS_SIZE);
-          packet->type = PACKET_TYPE_CLIENT_STATUS;
-          packet->packet.clientStatus.status = PACKET_CLIENT_STATUS_OK;
-          packet->packet.clientStatus.battery = (uint8_t)power::getBATPercent();
-          ble_send((uint8_t *)packet, PACKET_CLIENT_STATUS_SIZE);
-          free(packet);
-          statusNumber = 0;
         }
 
         /* 接收 */
