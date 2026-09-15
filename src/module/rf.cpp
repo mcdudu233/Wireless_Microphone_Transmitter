@@ -722,6 +722,14 @@ static void ble_on_sync(void)
     return;
   }
 
+  // 默认偏好2M PHY:接收端发起PHY更新时优先协商到2M提升空口速率
+  rc = ble_gap_set_prefered_default_le_phy(BLE_GAP_LE_PHY_1M_MASK | BLE_GAP_LE_PHY_2M_MASK,
+                                           BLE_GAP_LE_PHY_1M_MASK | BLE_GAP_LE_PHY_2M_MASK);
+  if (rc != 0)
+  {
+    LOGGER_WARN("BLE set default phy failed! rc=%d", rc);
+  }
+
   // 开始广告
   ble_start_advertising();
 }
@@ -1096,6 +1104,7 @@ static void rf_handle(void *arg)
         if (config::status.audio.start)
         {
           uint8_t size = audio::buffer::getBLEPacketFront(&bleSendBuffer);
+          bool allSent = size > 0;
           for (int part = 0; part < size; part++)
           {
             Packet *packet = bleSendBuffer[part];
@@ -1110,9 +1119,13 @@ static void rf_handle(void *arg)
             {
               bleSendFail++;
             }
-#else
-            (void)sent;
 #endif
+            allSent = allSent && sent;
+          }
+          // 全部分片发送成功才推进进度;失败的帧下一轮整帧重发,避免丢帧产生爆音
+          if (allSent)
+          {
+            audio::buffer::setBLEPacketSent(bleSendBuffer[0]->packet.audioDataBLE.number);
           }
           if (bleSendBuffer != NULL)
           {

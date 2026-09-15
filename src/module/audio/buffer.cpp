@@ -5,6 +5,7 @@
 static AudioData *data;
 static uint8_t data_pointer;
 static uint32_t data_number;
+static bool data_present = false; // 已有已提交帧(区分空缓冲与序号自然回绕到0)
 
 #ifdef BUILD_DEBUG
 static AudioTxBufferDebugStats wifi_debug_stats = {};
@@ -15,7 +16,7 @@ uint8_t *audio::buffer::getWritePointer(uint32_t packet_size)
   // 写入空闲槽位但暂不推进指针(此时包对读取端不可见),
   // 配合commitWrite发布完整数据, 避免发送任务读到写了一半的包(撕裂包产生杂音)
   AudioData *buffer = &data[data_pointer];
-  buffer->num = data_number % UINT32_MAX;
+  buffer->num = data_number;
   buffer->size = packet_size;
   return buffer->data;
 }
@@ -24,6 +25,7 @@ void audio::buffer::commitWrite()
 {
   data_pointer = (data_pointer + 1) % AUDIO_BUFFER_MAX_BUFFER_SIZE;
   data_number++;
+  data_present = true;
 }
 
 // 获取过去的第N个数据
@@ -39,23 +41,17 @@ AudioData *audio::buffer::getAudioDataFront()
 
 AudioData *audio::buffer::getAudioDataFromNumber(uint32_t number)
 {
-  int32_t now = getAudioDataFront()->num;
-  if (number > now)
+  const uint32_t now = getAudioDataFront()->num;
+  if ((int32_t)(number - now) > 0) // 目标序号在最新帧之后(回绕安全)
   {
     return nullptr;
   }
-  else if (number == now)
+  const uint32_t age = now - number;
+  if (age >= AUDIO_BUFFER_MAX_BUFFER_SIZE)
   {
-    return getAudioDataFront();
+    return nullptr;
   }
-  else
-  {
-    if ((now - number) >= AUDIO_BUFFER_MAX_BUFFER_SIZE)
-    {
-      return nullptr;
-    }
-    return getAudioData(now - number);
-  }
+  return getAudioData(age);
 }
 
 uint8_t audio::buffer::getPointer()
@@ -72,7 +68,7 @@ static uint32_t wifiLastNumber = 0;
 static bool wifiStarted = false;
 uint8_t audio::buffer::getWiFiPacketFront(netbuf ***buffers)
 {
-  if (data_number == 0)
+  if (!data_present)
   {
     return 0;
   }
@@ -98,7 +94,7 @@ uint8_t audio::buffer::getWiFiPacketFront(netbuf ***buffers)
     }
   }
 
-  if (!wifiStarted || audio->num > wifiLastNumber)
+  if (!wifiStarted || (int32_t)(audio->num - wifiLastNumber) > 0) // 回绕安全的序号比较
   {
     uint8_t part_max = (audio->size + PACKET_WIFI_AUDIO_DATA_MAX_SIZE - 1) /
                        PACKET_WIFI_AUDIO_DATA_MAX_SIZE;
@@ -199,13 +195,28 @@ void audio::buffer::getWiFiDebugStats(AudioTxBufferDebugStats &stats)
 #endif
 
 static uint32_t bleLastNumber = 0;
+static bool bleStarted = false;
 uint8_t audio::buffer::getBLEPacketFront(Packet ***buffers)
 {
-  AudioData *audio = getAudioDataFront();
-  if (audio->num > bleLastNumber)
+  if (data_number == 0)
   {
-    bleLastNumber = audio->num; // 已发送
+    return 0;
+  }
 
+  // 与WiFi路径一致按序发送:优先发送已确认帧的下一帧,积压超出历史窗口时跳到最新帧。
+  AudioData *newest = getAudioDataFront();
+  AudioData *audio = newest;
+  if (bleStarted)
+  {
+    audio = getAudioDataFromNumber(bleLastNumber + 1);
+    if (audio == nullptr)
+    {
+      audio = newest;
+    }
+  }
+
+  if (!bleStarted || audio->num > bleLastNumber)
+  {
     uint8_t part_max = audio->size / PACKET_BLE_AUDIO_DATA_MAX_SIZE;
     if (audio->size % PACKET_BLE_AUDIO_DATA_MAX_SIZE != 0)
     {
@@ -253,12 +264,20 @@ uint8_t audio::buffer::getBLEPacketFront(Packet ***buffers)
       buffer->packet.audioDataBLE.part = part;
       memcpy(buffer->packet.audioDataBLE.data, audio->data + PACKET_BLE_AUDIO_DATA_MAX_SIZE * part, part_size);
     }
+    // 注意:此处不推进发送进度,全部发送成功后必须调用setBLEPacketSent确认;
+    // 失败的帧会在下一轮整帧重发(接收端按分片掩码去重,重发安全)
     return part_max;
   }
   else
   {
     return 0;
   }
+}
+
+void audio::buffer::setBLEPacketSent(uint32_t number)
+{
+  bleLastNumber = number;
+  bleStarted = true;
 }
 
 void audio::buffer::restart()
@@ -273,6 +292,7 @@ void audio::buffer::restart()
   wifiLastNumber = 0;
   wifiStarted = false;
   bleLastNumber = 0;
+  bleStarted = false;
 #ifdef BUILD_DEBUG
   wifi_debug_stats = {};
 #endif
