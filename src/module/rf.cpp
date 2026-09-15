@@ -16,6 +16,7 @@
 #include "lwip/err.h"
 #include "lwip/api.h"
 static bool wifiIsOpen = false;
+static bool wifiIsClosing = false;
 static bool netifInitialized = false;
 static bool eventLoopInitialized = false;
 static uint8_t wifiRetryTime = 0;
@@ -209,7 +210,7 @@ static bool wifi_socket_open(uint32_t localIP, uint32_t destIP)
   return true;
 }
 
-static bool wifi_close();
+static void wifi_close();
 static bool ble_open();
 
 static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
@@ -237,6 +238,12 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
     // STA 断开连接事件
     case WIFI_EVENT_STA_DISCONNECTED:
     {
+      // 关闭流程中忽略事件:回调可能在事件任务中仍在执行,
+      // 而事件组即将被释放,此时访问会造成内存破坏
+      if (wifiIsClosing)
+      {
+        break;
+      }
       if (wifiIsOpen)
       {
         // 断开连接了
@@ -318,46 +325,48 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
   }
 }
 
-static bool wifi_close()
+static void wifi_close()
 {
   if (wifiIsOpen)
   {
+    // 标记关闭中:esp_wifi_stop会派发断开事件,注销前已在事件任务中
+    // 开始执行的回调借此标志跳过处理,避免访问即将释放的事件组
+    wifiIsClosing = true;
     wifi_socket_close();
     wifiIsOpen = false;
 
+    // 先注销事件回调再停止WiFi:注销后esp_wifi_stop派发的事件不再进入回调
     esp_err_t err;
-    err = esp_wifi_stop();
-    if (err != ESP_OK)
-    {
-      LOGGER_ERROR("WiFi esp_wifi_stop failed! Reason=%s", esp_err_to_name(err));
-      return false;
-    }
-
     err = esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, wifiHandleInstance1);
     if (err != ESP_OK)
     {
-      LOGGER_ERROR("WiFi esp_event_handler_instance_unregister failed! Reason=%s", esp_err_to_name(err));
-      return false;
+      LOGGER_WARN("WiFi esp_event_handler_instance_unregister failed! Reason=%s", esp_err_to_name(err));
     }
     err = esp_event_handler_instance_unregister(IP_EVENT, ESP_EVENT_ANY_ID, wifiHandleInstance2);
     if (err != ESP_OK)
     {
-      LOGGER_ERROR("WiFi esp_event_handler_instance_unregister failed! Reason=%s", esp_err_to_name(err));
-      return false;
+      LOGGER_WARN("WiFi esp_event_handler_instance_unregister failed! Reason=%s", esp_err_to_name(err));
     }
 
-    err = esp_wifi_deinit();
-    if (err != ESP_OK)
+    // 逐步释放并容忍个别步骤出错,保证清理完整执行到底
+    err = esp_wifi_stop();
+    if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_STARTED)
     {
-      LOGGER_ERROR("WiFi esp_wifi_deinit failed! Reason=%s", esp_err_to_name(err));
-      return false;
+      LOGGER_WARN("WiFi esp_wifi_stop failed! Reason=%s", esp_err_to_name(err));
     }
-
+    err = esp_wifi_deinit();
+    if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_INIT)
+    {
+      LOGGER_WARN("WiFi esp_wifi_deinit failed! Reason=%s", esp_err_to_name(err));
+    }
     esp_netif_destroy(wifiNetIF);
+
+    // 事件组最后释放:此时所有可能使用它的回调均已注销
     vEventGroupDelete(wifiEventGroup);
+    wifiEventGroup = nullptr;
+    wifiIsClosing = false;
   }
   LOGGER_INFO("WiFi is shutdown.");
-  return true;
 }
 
 static bool wifi_open(const char *ssid, const char *password)
@@ -368,6 +377,11 @@ static bool wifi_open(const char *ssid, const char *password)
   }
 
   wifiEventGroup = xEventGroupCreate();
+  if (wifiEventGroup == nullptr)
+  {
+    LOGGER_ERROR("WiFi event group create failed!");
+    return false;
+  }
 
   esp_err_t err;
   // 创建网络接口
@@ -377,6 +391,8 @@ static bool wifi_open(const char *ssid, const char *password)
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE)
     {
       LOGGER_ERROR("WiFi esp_netif_init failed! Reason=%s", esp_err_to_name(err));
+      vEventGroupDelete(wifiEventGroup);
+      wifiEventGroup = nullptr;
       return false;
     }
     netifInitialized = true;
@@ -387,18 +403,23 @@ static bool wifi_open(const char *ssid, const char *password)
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE)
     {
       LOGGER_ERROR("WiFi esp_event_loop_create_default failed! Reason=%s", esp_err_to_name(err));
+      vEventGroupDelete(wifiEventGroup);
+      wifiEventGroup = nullptr;
       return false;
     }
     eventLoopInitialized = true;
   }
   wifiNetIF = esp_netif_create_default_wifi_sta();
+  // 网络接口已创建,之后的失败路径统一走wifi_close()完整清理
+  wifiIsOpen = true;
 
   // 初始化 WiFi
   static wifi_init_config_t wifi_init_config = WIFI_INIT_CONFIG_DEFAULT();
   err = esp_wifi_init(&wifi_init_config);
   if (err != ESP_OK)
   {
-    LOGGER_ERROR("WiFi esp_event_loop_create_default failed! Reason=%s", esp_err_to_name(err));
+    LOGGER_ERROR("WiFi esp_wifi_init failed! Reason=%s", esp_err_to_name(err));
+    wifi_close();
     return false;
   }
 
@@ -407,12 +428,14 @@ static bool wifi_open(const char *ssid, const char *password)
   if (err != ESP_OK)
   {
     LOGGER_ERROR("WiFi esp_event_handler_instance_register failed! Reason=%s", esp_err_to_name(err));
+    wifi_close();
     return false;
   }
   err = esp_event_handler_instance_register(IP_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, &wifiHandleInstance2);
   if (err != ESP_OK)
   {
     LOGGER_ERROR("WiFi esp_event_handler_instance_register failed! Reason=%s", esp_err_to_name(err));
+    wifi_close();
     return false;
   }
 
@@ -425,18 +448,21 @@ static bool wifi_open(const char *ssid, const char *password)
   if (err != ESP_OK)
   {
     LOGGER_ERROR("WiFi esp_wifi_set_mode failed! Reason=%s", esp_err_to_name(err));
+    wifi_close();
     return false;
   }
   err = esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
   if (err != ESP_OK)
   {
     LOGGER_ERROR("WiFi esp_wifi_set_config failed! Reason=%s", esp_err_to_name(err));
+    wifi_close();
     return false;
   }
   err = esp_wifi_start();
   if (err != ESP_OK)
   {
     LOGGER_ERROR("WiFi esp_wifi_start failed! Reason=%s", esp_err_to_name(err));
+    wifi_close();
     return false;
   }
 
@@ -455,7 +481,6 @@ static bool wifi_open(const char *ssid, const char *password)
     LOGGER_INFO("WiFi is started for local IP %d.%d.%d.%d, gateway IP %d.%d.%d.%d.",
                 ((uint8_t *)&wifiIP)[0], ((uint8_t *)&wifiIP)[1], ((uint8_t *)&wifiIP)[2], ((uint8_t *)&wifiIP)[3],
                 ((uint8_t *)&wifiGatewayIP)[0], ((uint8_t *)&wifiGatewayIP)[1], ((uint8_t *)&wifiGatewayIP)[2], ((uint8_t *)&wifiGatewayIP)[3]);
-    wifiIsOpen = true;
     if (!wifi_socket_open(wifiIP, wifiGatewayIP))
     {
       wifi_close();
@@ -465,7 +490,6 @@ static bool wifi_open(const char *ssid, const char *password)
   }
   else
   {
-    wifiIsOpen = true;
     wifi_close();
     LOGGER_WARN("WiFi started failed! Can't connect to %s (%s)!", ssid, password);
     return false;
@@ -979,11 +1003,8 @@ static bool rf_receive_packet(const uint8_t *data, size_t len)
       }
       case RF_MODE_WIFI:
       {
-        if (!wifi_close())
-        {
-          LOGGER_WARN("RF switch aborted, WiFi close failed.");
-          return false; // 旧协议栈仍在运行,保持原模式
-        }
+        // wifi_close内部保证完整清理(容忍个别步骤出错),这里不再因清理告警中止切换
+        wifi_close();
         break;
       }
       default:

@@ -30,7 +30,8 @@
 #define TASK_RF_CORE 0
 #define TASK_RF_PERIOD 1
 #define TASK_RF_PRIORITY 8
-#define TASK_RF_STACK 4096
+// 模式切换会在本任务内联调用WiFi/NimBLE的关闭与初始化(调用链很深),加大栈深防止溢出
+#define TASK_RF_STACK 6144
 
 // 射频模式
 enum RFMode : uint8_t
