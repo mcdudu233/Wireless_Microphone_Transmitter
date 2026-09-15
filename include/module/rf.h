@@ -10,8 +10,11 @@
 #define BLE_PACKET_LENGTH 251
 #define BLE_PACKET_TIME 2120
 #define BLE_L2CAP_PSM 0x1001
-// COC MTU决定初始信用数(=ceil(MTU/MPS),MPS=504):512只有2个信用,余量不足
-#define BLE_L2CAP_MTU 1024
+// COC MTU决定信用窗口(初始信用=ceil(MTU/MPS),MPS=504):吞吐上限约为
+// MTU/(信用往返时延2~3个连接事件),需远大于96KB/s音频码率,故取4096(信用=9)
+#define BLE_L2CAP_MTU 4096
+// 接收侧实际缓冲容量:对端单包最大为音频分片392B或控制包<64B,与COC MTU(仅作信用窗口)解耦
+#define BLE_RECEIVE_DATA_MAX 512
 // WiFi
 #define WIFI_RETRY 5
 #define WIFI_CONNECTED_BIT BIT0

@@ -519,7 +519,7 @@ static ble_l2cap_chan *bleChannel = NULL;
 struct BleReceive
 {
   uint16_t size;
-  uint8_t data[BLE_L2CAP_MTU];
+  uint8_t data[BLE_RECEIVE_DATA_MAX];
 };
 static QueueHandle_t bleReceiveQueue;
 
@@ -592,7 +592,7 @@ static int ble_l2cap_handler(struct ble_l2cap_event *event, void *arg)
   {
     // 接受连接
     os_mbuf *sdu_rx;
-    sdu_rx = os_msys_get_pkthdr(BLE_L2CAP_MTU, 0);
+    sdu_rx = os_msys_get_pkthdr(BLE_RECEIVE_DATA_MAX, 0);
     if (sdu_rx == NULL)
     {
       LOGGER_WARN("BLE L2CAP accept no memory!");
@@ -632,7 +632,7 @@ static int ble_l2cap_handler(struct ble_l2cap_event *event, void *arg)
 
     // 响应数据 准备接收下一个数据包
     os_mbuf *sdu_rx;
-    sdu_rx = os_msys_get_pkthdr(BLE_L2CAP_MTU, 0);
+    sdu_rx = os_msys_get_pkthdr(BLE_RECEIVE_DATA_MAX, 0);
     if (sdu_rx == NULL)
     {
       LOGGER_WARN("BLE L2CAP accept no memory!");
@@ -1141,9 +1141,11 @@ static bool rf_receive_packet(const uint8_t *data, size_t len)
 static void rf_handle(void *arg)
 {
   // 缓存
-  Packet **bleSendBuffer = NULL;
   netbuf *wifiReceiveBuffer = NULL;
   netbuf **wifiSendBuffer = NULL;
+  // BLE发送包缓冲(仅需容纳单个分片,热路径零动态分配)
+  static uint8_t blePacketStorage[PACKET_BLE_AUDIO_HEAD_SIZE + PACKET_BLE_AUDIO_DATA_MAX_SIZE];
+  Packet *blePacket = (Packet *)blePacketStorage;
   // 定时发送设备状态
   uint16_t statusNumber = 0;
 #ifdef BUILD_DEBUG
@@ -1176,34 +1178,25 @@ static void rf_handle(void *arg)
         {
           if (config::status.audio.start)
           {
-            uint8_t size = audio::buffer::getBLEPacketFront(&bleSendBuffer);
-            bool allSent = size > 0;
-            for (int part = 0; part < size; part++)
+            // 每个调度周期发送一个分片,成功后确认推进;失败下轮重发同一分片
+            if (audio::buffer::getBLEPacket(*blePacket))
             {
-              Packet *packet = bleSendBuffer[part];
-              const bool sent = ble_send((uint8_t *)packet, PACKET_BLE_AUDIO_HEAD_SIZE + packet->packet.audioDataBLE.size);
+              const bool sent = ble_send((uint8_t *)blePacket, PACKET_BLE_AUDIO_HEAD_SIZE + blePacket->packet.audioDataBLE.size);
 #ifdef BUILD_DEBUG
               if (sent)
               {
                 bleSendOk++;
-                bleSentPayload += packet->packet.audioDataBLE.size;
+                bleSentPayload += blePacket->packet.audioDataBLE.size;
               }
               else
               {
                 bleSendFail++;
               }
 #endif
-              allSent = allSent && sent;
-            }
-            // 全部分片发送成功才推进进度;失败的帧下一轮整帧重发,避免丢帧产生爆音
-            if (allSent)
-            {
-              audio::buffer::setBLEPacketSent(bleSendBuffer[0]->packet.audioDataBLE.number);
-            }
-            if (bleSendBuffer != NULL)
-            {
-              free(bleSendBuffer);
-              bleSendBuffer = NULL;
+              if (sent)
+              {
+                audio::buffer::confirmBLEPacketSent();
+              }
             }
           }
           if (statusNumber++ >= RF_CLIENT_STATUS_PERIOD)

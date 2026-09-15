@@ -56,10 +56,11 @@ namespace audio::buffer
   // uint8_t getWiFiPacketFromNumber(uint32_t number, netbuf **buffer);
 
   /* 读取BLE数据 */
-  // 获取待发送的音频数据包分包(按序,发送失败不推进进度)
-  uint8_t getBLEPacketFront(Packet ***buffers);
-  // 确认某帧已全部发送成功,推进BLE发送进度(未确认的帧会被重发)
-  void setBLEPacketSent(uint32_t number);
+  // 获取下一个待发送分片(按帧序、帧内按分片序),填充到调用方提供的包缓冲。
+  // 热路径零动态分配;分片未确认前进度不推进,失败自动重发(接收端按分片掩码去重)
+  bool getBLEPacket(Packet &packet);
+  // 确认getBLEPacket返回的分片已成功交给协议栈,推进发送进度
+  void confirmBLEPacketSent();
 
 #ifdef BUILD_DEBUG
   // 读取并清零WiFi音频分包统计。

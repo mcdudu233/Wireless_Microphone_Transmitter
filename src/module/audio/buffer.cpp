@@ -194,90 +194,88 @@ void audio::buffer::getWiFiDebugStats(AudioTxBufferDebugStats &stats)
 }
 #endif
 
-static uint32_t bleLastNumber = 0;
-static bool bleStarted = false;
-uint8_t audio::buffer::getBLEPacketFront(Packet ***buffers)
+static uint32_t bleLastNumber = 0;  // 最近已确认完成的帧号
+static bool bleStarted = false;     // 是否已开始过发送(区分首帧选择逻辑)
+static uint32_t bleSendNumber = 0;  // 正在发送的帧号
+static uint32_t bleSendSize = 0;    // 正在发送的帧载荷字节数
+static uint8_t bleSendPart = 0;     // 下一个待发送的分片序号
+static uint8_t bleSendPartMax = 0;  // 正在发送帧的总分片数
+
+bool audio::buffer::getBLEPacket(Packet &packet)
 {
   if (!data_present)
   {
-    return 0;
+    return false;
   }
 
-  // 与WiFi路径一致按序发送:优先发送已确认帧的下一帧,积压超出历史窗口时跳到最新帧。
-  AudioData *newest = getAudioDataFront();
-  AudioData *audio = newest;
-  if (bleStarted)
+  // 当前帧已发完:选择下一帧(按序优先,积压超出历史窗口时跳到最新帧)
+  if (bleSendPart >= bleSendPartMax)
   {
-    audio = getAudioDataFromNumber(bleLastNumber + 1);
-    if (audio == nullptr)
+    AudioData *newest = getAudioDataFront();
+    AudioData *audio = newest;
+    if (bleStarted)
     {
-      audio = newest;
+      audio = getAudioDataFromNumber(bleLastNumber + 1);
+      if (audio == nullptr)
+      {
+        // 积压丢失,跳到最新帧;若只是尚无新帧,下方判断会拒绝
+        audio = newest;
+      }
     }
+    if (audio == nullptr || audio->size == 0 ||
+        (bleStarted && (int32_t)(audio->num - bleLastNumber) <= 0)) // 回绕安全的序号比较
+    {
+      // 尚无新帧可发
+      return false;
+    }
+    bleSendNumber = audio->num;
+    bleSendSize = audio->size;
+    bleSendPartMax = (audio->size + PACKET_BLE_AUDIO_DATA_MAX_SIZE - 1) / PACKET_BLE_AUDIO_DATA_MAX_SIZE;
+    if (bleSendPartMax == 0)
+    {
+      bleSendPartMax = 1;
+    }
+    bleSendPart = 0;
   }
 
-  if (!bleStarted || (int32_t)(audio->num - bleLastNumber) > 0) // 回绕安全的序号比较
+  // 按帧号重新定位帧数据(环形槽位可能已被写端覆盖,必须校验帧号)
+  AudioData *audio = getAudioDataFromNumber(bleSendNumber);
+  if (audio == nullptr || audio->num != bleSendNumber)
   {
-    uint8_t part_max = audio->size / PACKET_BLE_AUDIO_DATA_MAX_SIZE;
-    if (audio->size % PACKET_BLE_AUDIO_DATA_MAX_SIZE != 0)
-    {
-      part_max += 1;
-    }
-    *buffers = (Packet **)malloc(sizeof(Packet *) * part_max);
-    if (*buffers == NULL)
-    {
-      LOGGER_WARN("BLE (Packet **) malloc failed!");
-      return 0;
-    }
-    // 创建每个包
-    for (uint8_t part = 0; part < part_max; part++)
-    {
-      // 计算包大小
-      uint16_t part_size;
-      if (part != part_max - 1)
-      {
-        part_size = PACKET_BLE_AUDIO_DATA_MAX_SIZE;
-      }
-      else
-      {
-        // 最后一个包不一定是满的
-        part_size = audio->size - PACKET_BLE_AUDIO_DATA_MAX_SIZE * (part_max - 1);
-      }
+    // 帧已滑出历史窗口,放弃当前帧,下一轮重新选帧
+    bleSendPart = 0;
+    bleSendPartMax = 0;
+    return false;
+  }
 
-      // 初始化结构体
-      Packet *buffer = (Packet *)malloc(PACKET_BLE_AUDIO_HEAD_SIZE + part_size);
-      if (buffer == NULL)
-      {
-        // 释放之前已分配的资源
-        for (uint8_t i = 0; i < part; i++)
-        {
-          free((*buffers)[i]);
-        }
-        free(*buffers);
-        *buffers = NULL;
-        LOGGER_WARN("BLE Packet malloc failed!");
-        return 0;
-      }
-      (*buffers)[part] = buffer;
-      buffer->type = PACKET_TYPE_BLE_AUDIO;
-      buffer->packet.audioDataBLE.size = part_size;
-      buffer->packet.audioDataBLE.number = audio->num;
-      buffer->packet.audioDataBLE.part = part;
-      memcpy(buffer->packet.audioDataBLE.data, audio->data + PACKET_BLE_AUDIO_DATA_MAX_SIZE * part, part_size);
-    }
-    // 注意:此处不推进发送进度,全部发送成功后必须调用setBLEPacketSent确认;
-    // 失败的帧会在下一轮整帧重发(接收端按分片掩码去重,重发安全)
-    return part_max;
+  // 填充分片(热路径零动态分配,缓冲由调用方提供)
+  uint16_t part_size;
+  if (bleSendPart != bleSendPartMax - 1)
+  {
+    part_size = PACKET_BLE_AUDIO_DATA_MAX_SIZE;
   }
   else
   {
-    return 0;
+    // 最后一个分片不一定是满的
+    part_size = bleSendSize - PACKET_BLE_AUDIO_DATA_MAX_SIZE * (bleSendPartMax - 1);
   }
+  packet.type = PACKET_TYPE_BLE_AUDIO;
+  packet.packet.audioDataBLE.size = part_size;
+  packet.packet.audioDataBLE.number = bleSendNumber;
+  packet.packet.audioDataBLE.part = bleSendPart;
+  memcpy(packet.packet.audioDataBLE.data, audio->data + PACKET_BLE_AUDIO_DATA_MAX_SIZE * bleSendPart, part_size);
+  return true;
 }
 
-void audio::buffer::setBLEPacketSent(uint32_t number)
+void audio::buffer::confirmBLEPacketSent()
 {
-  bleLastNumber = number;
-  bleStarted = true;
+  bleSendPart++;
+  if (bleSendPart >= bleSendPartMax)
+  {
+    // 整帧全部分片发送完成
+    bleLastNumber = bleSendNumber;
+    bleStarted = true;
+  }
 }
 
 void audio::buffer::restart()
@@ -294,6 +292,10 @@ void audio::buffer::restart()
   wifiStarted = false;
   bleLastNumber = 0;
   bleStarted = false;
+  bleSendNumber = 0;
+  bleSendSize = 0;
+  bleSendPart = 0;
+  bleSendPartMax = 0;
 #ifdef BUILD_DEBUG
   wifi_debug_stats = {};
 #endif
