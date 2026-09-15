@@ -505,6 +505,9 @@ static bool wifi_open(const char *ssid, const char *password)
 #include "host/ble_hs.h"
 #include "host/util/util.h"
 #include "services/gap/ble_svc_gap.h"
+#include "store/config/ble_store_config.h"
+// IDF的ble_store_config.h未声明init函数,官方示例同样是手动前置声明(注意保持C链接)
+extern "C" void ble_store_config_init(void);
 
 static bool bleIsOpen = false;
 static bool bleIsClosing = false;
@@ -882,10 +885,13 @@ static bool ble_open()
     return false;
   }
 
+  // 初始化键值存储回调:否则协议栈启动时"Failed to persist local IRK"告警
+  // (本机不使用加密/绑定,仅注册RAM存储让IRK写入成功)
+  ble_store_config_init();
+
   // 初始化配置
   ble_hs_cfg.reset_cb = ble_on_reset;
   ble_hs_cfg.sync_cb = ble_on_sync;
-  ble_hs_cfg.store_status_cb = NULL;
 
   // 启动 NimBLE 主机任务
   nimble_port_freertos_init(ble_host_task);
