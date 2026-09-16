@@ -1073,6 +1073,24 @@ static bool rf_receive_packet(const uint8_t *data, size_t len)
         return false;
       }
       config::status.rf.mode = src->mode;
+      // 切到BLE后立即收敛本地音频格式:BLE带宽仅支持48000Hz/16bit/单声道,
+      // 否则在收到接收端下一条音频配置前,编码器仍会按旧格式(如WIFI时代的192kHz)推送
+      if (src->mode == RF_MODE_BLE &&
+          (config::status.audio.channel != AUDIO_CHANNEL_SINGLE ||
+           config::status.audio.rate != AUDIO_RATE_48000 ||
+           config::status.audio.bit != AUDIO_BIT_16))
+      {
+        LOGGER_INFO("BLE mode fixes audio format to 48000Hz/16bit/mono.");
+        config::status.audio.channel = AUDIO_CHANNEL_SINGLE;
+        config::status.audio.rate = AUDIO_RATE_48000;
+        config::status.audio.bit = AUDIO_BIT_16;
+        if (audio::encoder::isOn())
+        {
+          audio::encoder::on(config::status.audio.channel, config::status.audio.rate,
+                             config::status.audio.bit, config::status.audio.mode,
+                             config::status.audio.gain);
+        }
+      }
     }
     break;
   }
