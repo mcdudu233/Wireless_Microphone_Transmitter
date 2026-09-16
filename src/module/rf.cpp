@@ -547,7 +547,10 @@ static int ble_l2cap_handler(struct ble_l2cap_event *event, void *arg)
       {
         bleChannel = event->connect.chan;
         bleChannelBusy = false;
-        LOGGER_INFO("BLE channel connected.");
+        // 记录协商结果(吞吐诊断:对端COC MTU应为4096,即信用=9)
+        LOGGER_INFO("BLE channel connected, our_mtu: %d, peer_mtu: %d, our_mps: %d, peer_mps: %d",
+                    chan_info.our_coc_mtu, chan_info.peer_coc_mtu,
+                    chan_info.our_l2cap_mtu, chan_info.peer_l2cap_mtu);
       }
     }
     else
@@ -682,7 +685,17 @@ static int ble_gap_handler(struct ble_gap_event *event, void *arg)
         LOGGER_WARN("BLE failed to create config L2CAP server: %d", rc);
       }
       ble_stop_advertising();
-      LOGGER_INFO("BLE connected, conn_handle: %d", event->connect.conn_handle);
+      // 记录实际连接间隔(吞吐诊断:7.5ms间隔应显示conn_itvl=6)
+      ble_gap_conn_desc conn_desc;
+      if (ble_gap_conn_find(event->connect.conn_handle, &conn_desc) == 0)
+      {
+        LOGGER_INFO("BLE connected, conn_handle: %d, conn_itvl: %d x1.25ms, supervision_timeout: %d x10ms",
+                    event->connect.conn_handle, conn_desc.conn_itvl, conn_desc.supervision_timeout);
+      }
+      else
+      {
+        LOGGER_INFO("BLE connected, conn_handle: %d", event->connect.conn_handle);
+      }
     }
     else
     {
