@@ -10,6 +10,10 @@
 #define BLE_PACKET_LENGTH 251
 #define BLE_PACKET_TIME 2120
 #define BLE_L2CAP_PSM 0x1001
+// CoC正常信用等待仅持续若干连接事件；超过此值视为通道丢失唤醒并重连。
+#define BLE_TX_STALL_TIMEOUT 750 // ms
+// 连续投递失败但未进入ESTALLED时同样可能是NimBLE通道状态卡死。
+#define BLE_TX_RETRY_TIMEOUT 1000 // ms
 // COC MTU决定信用窗口(初始信用=ceil(MTU/MPS),MPS=504):吞吐上限约为
 // MTU/(信用往返时延2~3个连接事件),需远大于96KB/s音频码率,故取4096(信用=9)
 #define BLE_L2CAP_MTU 4096

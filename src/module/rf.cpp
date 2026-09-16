@@ -45,6 +45,10 @@ struct RfDebugSnapshot
   uint32_t ble_parts;
   uint32_t ble_payload;
   uint32_t ble_fail;
+  bool ble_busy;
+  uint32_t ble_busy_ms;
+  uint32_t ble_retry_ms;
+  uint32_t ble_recoveries;
 };
 
 static portMUX_TYPE rf_debug_mux = portMUX_INITIALIZER_UNLOCKED;
@@ -68,10 +72,13 @@ static void rfDebugHandle(void *arg)
     {
       if (snapshot.ble_mode)
       {
-        LOGGER_INFO("Audio TX BLE parts=%lu payload=%lu send_fail=%lu",
+        LOGGER_INFO("Audio TX BLE parts=%lu payload=%lu send_fail=%lu busy=%d busy_ms=%lu retry_ms=%lu recoveries=%lu",
                     static_cast<unsigned long>(snapshot.ble_parts),
                     static_cast<unsigned long>(snapshot.ble_payload),
-                    static_cast<unsigned long>(snapshot.ble_fail));
+                    static_cast<unsigned long>(snapshot.ble_fail), snapshot.ble_busy,
+                    static_cast<unsigned long>(snapshot.ble_busy_ms),
+                    static_cast<unsigned long>(snapshot.ble_retry_ms),
+                    static_cast<unsigned long>(snapshot.ble_recoveries));
       }
       else
       {
@@ -512,9 +519,86 @@ extern "C" void ble_store_config_init(void);
 static bool bleIsOpen = false;
 static bool bleIsClosing = false;
 static bool bleIsAdvertising = false;
-static bool bleChannelBusy = false; // 通道上暂挂着未发完的SDU,等COC_TX_UNSTALLED
 static uint16_t bleConnectionHandle = 0;
 static ble_l2cap_chan *bleChannel = NULL;
+// CoC发送状态由RF任务和NimBLE主机任务共同访问，必须同步，避免丢失UNSTALLED唤醒。
+static portMUX_TYPE bleTxStateMux = portMUX_INITIALIZER_UNLOCKED;
+static bool bleChannelBusy = false; // 通道上暂挂着未发完的SDU,等COC_TX_UNSTALLED
+static uint32_t bleChannelBusySince = 0;
+static bool bleRecoveryPending = false;
+static uint32_t bleRecoveryCount = 0;
+
+struct BleTxStateSnapshot
+{
+  bool busy;
+  bool recovery_pending;
+  uint32_t busy_since;
+  uint32_t recovery_count;
+};
+
+static void ble_tx_begin_send()
+{
+  const uint32_t now = millis();
+  portENTER_CRITICAL(&bleTxStateMux);
+  if (!bleChannelBusy)
+  {
+    bleChannelBusySince = now;
+  }
+  // 在ble_l2cap_send之前置位。若UNSTALLED在调用期间到达，回调清零后不会被覆盖。
+  bleChannelBusy = true;
+  portEXIT_CRITICAL(&bleTxStateMux);
+}
+
+static void ble_tx_clear_busy()
+{
+  portENTER_CRITICAL(&bleTxStateMux);
+  bleChannelBusy = false;
+  bleChannelBusySince = 0;
+  portEXIT_CRITICAL(&bleTxStateMux);
+}
+
+static void ble_tx_reset_transport_state()
+{
+  portENTER_CRITICAL(&bleTxStateMux);
+  bleChannelBusy = false;
+  bleChannelBusySince = 0;
+  bleRecoveryPending = false;
+  portEXIT_CRITICAL(&bleTxStateMux);
+}
+
+static BleTxStateSnapshot ble_tx_get_state()
+{
+  BleTxStateSnapshot snapshot = {};
+  portENTER_CRITICAL(&bleTxStateMux);
+  snapshot.busy = bleChannelBusy;
+  snapshot.recovery_pending = bleRecoveryPending;
+  snapshot.busy_since = bleChannelBusySince;
+  snapshot.recovery_count = bleRecoveryCount;
+  portEXIT_CRITICAL(&bleTxStateMux);
+  return snapshot;
+}
+
+static bool ble_tx_begin_recovery(uint32_t &recoveryCount)
+{
+  bool started = false;
+  portENTER_CRITICAL(&bleTxStateMux);
+  if (!bleRecoveryPending)
+  {
+    bleRecoveryPending = true;
+    bleRecoveryCount++;
+    recoveryCount = bleRecoveryCount;
+    started = true;
+  }
+  portEXIT_CRITICAL(&bleTxStateMux);
+  return started;
+}
+
+static void ble_tx_cancel_recovery()
+{
+  portENTER_CRITICAL(&bleTxStateMux);
+  bleRecoveryPending = false;
+  portEXIT_CRITICAL(&bleTxStateMux);
+}
 // 蓝牙接收队列，避免在 NimBLE 回调和 RF 任务之间共享 STL 容器。
 struct BleReceive
 {
@@ -546,7 +630,7 @@ static int ble_l2cap_handler(struct ble_l2cap_event *event, void *arg)
       if (chan_info.psm == BLE_L2CAP_PSM)
       {
         bleChannel = event->connect.chan;
-        bleChannelBusy = false;
+        ble_tx_reset_transport_state();
         // 记录协商结果(吞吐诊断:对端COC MTU应为4096,即信用=9)
         LOGGER_INFO("BLE channel connected, our_mtu: %d, peer_mtu: %d, our_mps: %d, peer_mps: %d",
                     chan_info.our_coc_mtu, chan_info.peer_coc_mtu,
@@ -573,7 +657,7 @@ static int ble_l2cap_handler(struct ble_l2cap_event *event, void *arg)
     if (chan_info.psm == BLE_L2CAP_PSM)
     {
       bleChannel = NULL;
-      bleChannelBusy = false;
+      ble_tx_reset_transport_state();
       LOGGER_INFO("BLE channel disconnected.");
     }
     break;
@@ -582,7 +666,7 @@ static int ble_l2cap_handler(struct ble_l2cap_event *event, void *arg)
   // 暂挂SDU续发完成事件(信用回充后栈自动发完挂起的数据)
   case BLE_L2CAP_EVENT_COC_TX_UNSTALLED:
   {
-    bleChannelBusy = false;
+    ble_tx_clear_busy();
     if (event->tx_unstalled.status != 0)
     {
       LOGGER_WARN("BLE tx unstalled with error: %d", event->tx_unstalled.status);
@@ -712,6 +796,7 @@ static int ble_gap_handler(struct ble_gap_event *event, void *arg)
     bleConnectionHandle = BLE_HS_CONN_HANDLE_NONE;
     // 清理L2CAP通道
     bleChannel = NULL;
+    ble_tx_reset_transport_state();
     if (!bleIsClosing && bleIsOpen)
     {
       ble_start_advertising();
@@ -782,6 +867,7 @@ static void ble_on_reset(int reason)
   ble_stop_advertising();
   bleConnectionHandle = BLE_HS_CONN_HANDLE_NONE;
   bleChannel = NULL;
+  ble_tx_reset_transport_state();
   bleIsOpen = false;
 }
 
@@ -912,6 +998,7 @@ static bool ble_close()
     // 清理全局状态
     bleConnectionHandle = BLE_HS_CONN_HANDLE_NONE;
     bleChannel = NULL;
+    ble_tx_reset_transport_state();
     bleIsOpen = false;
   }
   bleIsClosing = false;
@@ -972,28 +1059,62 @@ bool ble_send(const uint8_t *data, uint16_t len)
     return false;
   }
 
+  // 先标记忙再调用NimBLE，防止UNSTALLED恰好在返回ESTALLED之前到达而丢失唤醒。
+  ble_tx_begin_send();
   int rc = ble_l2cap_send(bleChannel, om);
   if (rc == 0 || rc == BLE_HS_ESTALLED)
   {
     // 0=已全部发出;ESTALLED=栈已接管SDU(挂在通道上等对端信用,回充后自动续发),
     // 两种情况下mbuf均归栈所有,不得释放,均视为发送成功
-    if (rc == BLE_HS_ESTALLED)
+    if (rc == 0)
     {
-      // 通道暂挂:收到COC_TX_UNSTALLED事件前不再投递新SDU
-      bleChannelBusy = true;
+      ble_tx_clear_busy();
     }
     return true;
   }
-  if (rc == BLE_HS_EBUSY || rc == BLE_HS_EBADDATA)
+  if (rc == BLE_HS_EBUSY)
   {
-    // 通道上仍有未发完的SDU或载荷超限,本次SDU未被栈接收,缓冲仍归调用方
-    bleChannelBusy = true;
+    // EBUSY不保证后续产生UNSTALLED事件，不能永久置忙；释放并在下一调度周期重试。
+    ble_tx_clear_busy();
     os_mbuf_free_chain(om);
     return false;
   }
+  if (rc == BLE_HS_EBADDATA)
+  {
+    ble_tx_clear_busy();
+    os_mbuf_free_chain(om);
+    LOGGER_WARN("BLE rejected invalid L2CAP data: len=%u", len);
+    return false;
+  }
   // 其余错误(如ENOMEM)路径中栈已自行释放SDU,不得重复释放
+  ble_tx_clear_busy();
   LOGGER_WARN("BLE failed to send data: %d", rc);
   return false;
+}
+
+static void ble_recover_stalled_audio(const char *reason, uint32_t elapsed)
+{
+  uint32_t recoveryCount = 0;
+  if (!ble_tx_begin_recovery(recoveryCount))
+  {
+    return;
+  }
+
+  const uint16_t handle = bleConnectionHandle;
+  LOGGER_WARN("BLE audio transport stalled (%s %lums), reconnecting; recovery=%lu",
+              reason, static_cast<unsigned long>(elapsed), static_cast<unsigned long>(recoveryCount));
+  if (handle == BLE_HS_CONN_HANDLE_NONE)
+  {
+    ble_tx_cancel_recovery();
+    return;
+  }
+
+  const int rc = ble_gap_terminate(handle, BLE_ERR_REM_USER_CONN_TERM);
+  if (rc != 0 && rc != BLE_HS_EALREADY)
+  {
+    LOGGER_WARN("BLE audio recovery disconnect failed: rc=%d", rc);
+    ble_tx_cancel_recovery();
+  }
 }
 /****************************/
 
@@ -1203,6 +1324,7 @@ static void rf_handle(void *arg)
   static uint8_t bleStatusStorage[PACKET_CLIENT_STATUS_SIZE];
   Packet *bleStatusPacket = reinterpret_cast<Packet *>(bleStatusStorage);
   uint32_t bleStatusTime = millis();
+  uint32_t bleRetrySince = 0;
   uint32_t wifiStatusTime = millis();
 #ifdef BUILD_DEBUG
   uint32_t wifiReportTime = millis();
@@ -1229,10 +1351,24 @@ static void rf_handle(void *arg)
       /* 处理 BLE 模块 */
       if (bleIsOpen && bleChannel != NULL)
       {
-        /* 发送(通道暂挂期间跳过,等COC_TX_UNSTALLED通知后再投递,避免EBUSY风暴) */
-        if (!bleChannelBusy)
+        const uint32_t now = millis();
+        BleTxStateSnapshot bleState = ble_tx_get_state();
+        if (!bleState.recovery_pending && bleState.busy &&
+            now - bleState.busy_since >= BLE_TX_STALL_TIMEOUT)
         {
-          const uint32_t now = millis();
+          ble_recover_stalled_audio("credit wait", now - bleState.busy_since);
+          bleState = ble_tx_get_state();
+        }
+        else if (!bleState.recovery_pending && bleRetrySince != 0 &&
+                 now - bleRetrySince >= BLE_TX_RETRY_TIMEOUT)
+        {
+          ble_recover_stalled_audio("send retry", now - bleRetrySince);
+          bleState = ble_tx_get_state();
+        }
+
+        /* 发送(通道暂挂期间跳过,等COC_TX_UNSTALLED通知后再投递,避免EBUSY风暴) */
+        if (!bleState.busy && !bleState.recovery_pending)
+        {
           if (now - bleStatusTime >= RF_CLIENT_STATUS_PERIOD)
           {
             // 每轮最多向CoC投递一个SDU。状态包优先一轮，下一毫秒继续追赶音频，
@@ -1246,11 +1382,21 @@ static void rf_handle(void *arg)
             if (ble_send(bleStatusStorage, PACKET_CLIENT_STATUS_SIZE))
             {
               bleStatusTime = now;
+              bleRetrySince = 0;
             }
 #ifdef BUILD_DEBUG
             else
             {
               bleSendFail++;
+              if (bleRetrySince == 0)
+              {
+                bleRetrySince = now;
+              }
+            }
+#else
+            else if (bleRetrySince == 0)
+            {
+              bleRetrySince = now;
             }
 #endif
           }
@@ -1273,7 +1419,12 @@ static void rf_handle(void *arg)
 #endif
               if (sent)
               {
+                bleRetrySince = 0;
                 audio::buffer::confirmBLEPacketSent();
+              }
+              else if (bleRetrySince == 0)
+              {
+                bleRetrySince = now;
               }
             }
           }
@@ -1286,6 +1437,10 @@ static void rf_handle(void *arg)
           // 解析数据包
           rf_receive_packet(receive.data, receive.size);
         }
+      }
+      else
+      {
+        bleRetrySince = 0;
       }
       break;
     }
@@ -1412,6 +1567,12 @@ static void rf_handle(void *arg)
       snapshot.ble_parts = bleSendOk;
       snapshot.ble_payload = bleSentPayload;
       snapshot.ble_fail = bleSendFail;
+      const BleTxStateSnapshot bleState = ble_tx_get_state();
+      const uint32_t reportNow = millis();
+      snapshot.ble_busy = bleState.busy;
+      snapshot.ble_busy_ms = bleState.busy ? reportNow - bleState.busy_since : 0;
+      snapshot.ble_retry_ms = bleRetrySince != 0 ? reportNow - bleRetrySince : 0;
+      snapshot.ble_recoveries = bleState.recovery_count;
       portENTER_CRITICAL(&rf_debug_mux);
       rf_debug_snapshot = snapshot;
       portEXIT_CRITICAL(&rf_debug_mux);
