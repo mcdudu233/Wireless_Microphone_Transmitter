@@ -2,6 +2,7 @@
 #include "config.h"
 #include "module/power.h"
 #include "module/led.h"
+#include "module/rf.h"
 
 #include "driver/rtc_io.h"
 #include "esp_sleep.h"
@@ -40,9 +41,14 @@ static void power_handle(void *arg)
   {
     xTaskDelayUntil(&xLastWakeTime, xFrequency);
 
-    // 等待过久没有连接自动进入深睡
+    // 与接收器保持连接期间(含音频传输)不计入自动睡眠计时;
+    // 仅从断开时刻起计时,超时仍未重连才深睡
     unsigned long nowTime = millis();
-    if (nowTime - waitLastTime > SLEEP_WAIT_TIME)
+    if (rf::isConnected())
+    {
+      waitLastTime = nowTime;
+    }
+    else if (nowTime - waitLastTime > SLEEP_WAIT_TIME)
     {
       power::deepSleep();
     }

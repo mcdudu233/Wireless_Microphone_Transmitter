@@ -34,6 +34,7 @@ struct __attribute__((packed)) ClientStatusPacket
 {
   PacketClientStatus status;
   uint8_t battery;
+  AudioGain gain; // 发射端当前实际增益(dB):自动增益/峰值减少模式下动态变化,供接收端跟踪
 };
 
 // 服务端控制设备
@@ -108,4 +109,6 @@ struct __attribute__((packed)) Packet
 namespace rf
 {
   void setup();
+  // 是否与接收器保持连接(BLE通道已建立或WiFi socket可用)
+  bool isConnected();
 }

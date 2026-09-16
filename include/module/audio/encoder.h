@@ -22,6 +22,8 @@
 #define AGC_NOISE_GATE -60.0f     // 噪声门限 dBFS 低于该电平不提升增益,防止放大底噪
 #define AGC_SPEED_ATTACK 0.005f   // 快增加
 #define AGC_SPEED_RELEASE 0.0025f // 慢减少
+// 峰值减少模式:输出峰值上限 dBFS,输入峰值叠加当前增益超过该上限时下调增益(只降不升)
+#define AGC_PEEK_CEILING (-3.0f)
 
 namespace audio::encoder
 {
@@ -34,6 +36,8 @@ namespace audio::encoder
   void setMode(AudioMode mode);
   // 设置增益(dB)
   void setGain(AudioGain gain);
+  // 获取当前实际生效增益(dB):自动增益/峰值减少模式下随算法动态变化
+  AudioGain getGain();
 
   // 默认采用 Linear phase filters ，可以设置为 Low latency filters
   void setLowLatencyFilter(bool on);

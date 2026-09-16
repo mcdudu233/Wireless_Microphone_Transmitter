@@ -1237,6 +1237,10 @@ static void rf_handle(void *arg)
             packet->type = PACKET_TYPE_CLIENT_STATUS;
             packet->packet.clientStatus.status = PACKET_CLIENT_STATUS_OK;
             packet->packet.clientStatus.battery = (uint8_t)power::getBATPercent();
+            // 编码器未启动(仅配对未推流)时上报命令增益,即接收端配置的初始增益
+            packet->packet.clientStatus.gain = audio::encoder::isOn()
+                                                   ? audio::encoder::getGain()
+                                                   : config::status.audio.gain;
             ble_send((uint8_t *)packet, PACKET_CLIENT_STATUS_SIZE);
             free(packet);
             statusNumber = 0;
@@ -1318,6 +1322,10 @@ static void rf_handle(void *arg)
             packet->type = PACKET_TYPE_CLIENT_STATUS;
             packet->packet.clientStatus.status = PACKET_CLIENT_STATUS_OK;
             packet->packet.clientStatus.battery = (uint8_t)power::getBATPercent();
+            // 编码器未启动(仅配对未推流)时上报命令增益,即接收端配置的初始增益
+            packet->packet.clientStatus.gain = audio::encoder::isOn()
+                                                   ? audio::encoder::getGain()
+                                                   : config::status.audio.gain;
             wifi_send(buf);
           }
           statusNumber = 0;
@@ -1384,6 +1392,12 @@ static void rf_handle(void *arg)
     }
 #endif
   }
+}
+
+// 是否与接收器保持连接:BLE通道已建立或WiFi socket可用
+bool rf::isConnected()
+{
+  return (bleIsOpen && bleChannel != NULL) || wifi_is_connected();
 }
 
 void rf::setup()

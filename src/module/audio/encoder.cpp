@@ -65,6 +65,10 @@ static esp_ae_ch_cvt_handle_t ch_cvt_handle = NULL;
 
 static bool powerOn = false;
 
+// 当前实际生效增益(dB):命令值由i2s_gain保存,自动/峰值减少算法动态下调时同步更新,
+// 供状态包上报给接收端(rf任务读,int8_t原子读取)
+static volatile AudioGain encoderGain = 0;
+
 #ifdef BUILD_DEBUG
 static void logI2SClock(i2s_chan_handle_t handle, uint32_t requested_rate, uint32_t mclk_multiple)
 {
@@ -381,13 +385,49 @@ static void audioHandle(void *arg)
                   esp_ae_alc_set_gain(alc_handle, 0, requested_auto_gain);
                   esp_ae_alc_set_gain(alc_handle, 1, requested_auto_gain);
                   last_auto_gain = requested_auto_gain;
+                  encoderGain = requested_auto_gain;
                 }
               }
               break;
             }
-            // 峰值减少增益
+            // 峰值减少增益:输入峰值叠加当前增益将超过输出上限时下调增益(只降不升),
+            // 初始增益为接收端下发的配置值,下调量经状态包回报给接收端
             case AUDIO_MODE_PEEK:
             {
+              auto_data = (int32_t *)i2s_data1;
+              int64_t peak = 0;
+              for (uint16_t i = 0; i < sample_num; i++)
+              {
+                int64_t left = auto_data[i * 2];
+                int64_t right = auto_data[i * 2 + 1];
+                left = (left < 0) ? -left : left;
+                right = (right < 0) ? -right : right;
+                if (left > peak)
+                  peak = left;
+                if (right > peak)
+                  peak = right;
+              }
+              if (peak > 0)
+              {
+                const int32_t peak_i32 = (peak > INT32_MAX) ? INT32_MAX : (int32_t)peak;
+                // 输出峰值 = 输入峰值 + 当前增益,超过上限时按需下调
+                const float allowed = AGC_PEEK_CEILING - dBFromV(peak_i32 * 1.0f / INT32_MAX);
+                if (allowed < i2s_gain)
+                {
+                  AudioGain new_gain = (AudioGain)allowed;
+                  if (new_gain < AGC_GAIN_MIN)
+                  {
+                    new_gain = AGC_GAIN_MIN;
+                  }
+                  if (new_gain != i2s_gain)
+                  {
+                    i2s_gain = new_gain;
+                    encoderGain = new_gain;
+                    esp_ae_alc_set_gain(alc_handle, 0, new_gain);
+                    esp_ae_alc_set_gain(alc_handle, 1, new_gain);
+                  }
+                }
+              }
               break;
             }
             // 手动增益
@@ -585,6 +625,7 @@ void audio::encoder::on(AudioChannel channel, AudioRate rate, AudioBit bit, Audi
   i2s_bit = bit;
   i2s_mode = mode;
   i2s_gain = gain;
+  encoderGain = gain;
 
   i2s_std_config_t std_cfg = {
       .clk_cfg = {
@@ -722,9 +763,16 @@ void audio::encoder::setGain(AudioGain gain)
   if (alc_handle != NULL)
   {
     i2s_gain = gain;
+    encoderGain = gain;
     esp_ae_alc_set_gain(alc_handle, 0, gain);
     esp_ae_alc_set_gain(alc_handle, 1, gain);
   }
+}
+
+// 获取当前实际生效增益(dB)
+AudioGain audio::encoder::getGain()
+{
+  return encoderGain;
 }
 
 void audio::encoder::setLowLatencyFilter(bool on)
