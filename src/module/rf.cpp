@@ -736,6 +736,28 @@ static int ble_gap_handler(struct ble_gap_event *event, void *arg)
     break;
   }
 
+  case BLE_GAP_EVENT_PHY_UPDATE_COMPLETE:
+  {
+    LOGGER_INFO("BLE phy updated; status=%d handle=%d tx_phy=%d rx_phy=%d (1=1M 2=2M)",
+                event->phy_updated.status, event->phy_updated.conn_handle,
+                event->phy_updated.tx_phy, event->phy_updated.rx_phy);
+    if (event->phy_updated.status != 0 || event->phy_updated.tx_phy != 2 ||
+        event->phy_updated.rx_phy != 2)
+    {
+      LOGGER_WARN("BLE 2M PHY is not active; lossless PCM bandwidth is insufficient on 1M.");
+    }
+    break;
+  }
+
+  case BLE_GAP_EVENT_DATA_LEN_CHG:
+  {
+    LOGGER_INFO("BLE data length updated; handle=%d tx_octets=%d tx_time=%dus rx_octets=%d rx_time=%dus",
+                event->data_len_chg.conn_handle, event->data_len_chg.max_tx_octets,
+                event->data_len_chg.max_tx_time, event->data_len_chg.max_rx_octets,
+                event->data_len_chg.max_rx_time);
+    break;
+  }
+
   // 蓝牙广告停止事件
   case BLE_GAP_EVENT_ADV_COMPLETE:
   {
@@ -776,9 +798,9 @@ static void ble_on_sync(void)
     return;
   }
 
-  // 默认偏好2M PHY:接收端发起PHY更新时优先协商到2M提升空口速率
-  rc = ble_gap_set_prefered_default_le_phy(BLE_GAP_LE_PHY_1M_MASK | BLE_GAP_LE_PHY_2M_MASK,
-                                           BLE_GAP_LE_PHY_1M_MASK | BLE_GAP_LE_PHY_2M_MASK);
+  // 默认仅偏好2M PHY，接收端发起更新时不得继续保留1M。
+  rc = ble_gap_set_prefered_default_le_phy(BLE_GAP_LE_PHY_2M_MASK,
+                                           BLE_GAP_LE_PHY_2M_MASK);
   if (rc != 0)
   {
     LOGGER_WARN("BLE set default phy failed! rc=%d", rc);
@@ -1177,8 +1199,11 @@ static void rf_handle(void *arg)
   // BLE发送包缓冲(仅需容纳单个分片,热路径零动态分配)
   static uint8_t blePacketStorage[PACKET_BLE_AUDIO_HEAD_SIZE + PACKET_BLE_AUDIO_DATA_MAX_SIZE];
   Packet *blePacket = (Packet *)blePacketStorage;
-  // 定时发送设备状态
-  uint16_t statusNumber = 0;
+  // 状态包使用固定小缓冲，避免RF热路径malloc；用真实毫秒计时而非任务轮数。
+  static uint8_t bleStatusStorage[PACKET_CLIENT_STATUS_SIZE];
+  Packet *bleStatusPacket = reinterpret_cast<Packet *>(bleStatusStorage);
+  uint32_t bleStatusTime = millis();
+  uint32_t wifiStatusTime = millis();
 #ifdef BUILD_DEBUG
   uint32_t wifiReportTime = millis();
   uint32_t wifiSendOk = 0;
@@ -1207,7 +1232,29 @@ static void rf_handle(void *arg)
         /* 发送(通道暂挂期间跳过,等COC_TX_UNSTALLED通知后再投递,避免EBUSY风暴) */
         if (!bleChannelBusy)
         {
-          if (config::status.audio.start)
+          const uint32_t now = millis();
+          if (now - bleStatusTime >= RF_CLIENT_STATUS_PERIOD)
+          {
+            // 每轮最多向CoC投递一个SDU。状态包优先一轮，下一毫秒继续追赶音频，
+            // 避免紧跟音频包再次ble_l2cap_send触发EBUSY(rc=15)。
+            bleStatusPacket->type = PACKET_TYPE_CLIENT_STATUS;
+            bleStatusPacket->packet.clientStatus.status = PACKET_CLIENT_STATUS_OK;
+            bleStatusPacket->packet.clientStatus.battery = (uint8_t)power::getBATPercent();
+            bleStatusPacket->packet.clientStatus.gain = audio::encoder::isOn()
+                                                           ? audio::encoder::getGain()
+                                                           : config::status.audio.gain;
+            if (ble_send(bleStatusStorage, PACKET_CLIENT_STATUS_SIZE))
+            {
+              bleStatusTime = now;
+            }
+#ifdef BUILD_DEBUG
+            else
+            {
+              bleSendFail++;
+            }
+#endif
+          }
+          else if (config::status.audio.start)
           {
             // 每个调度周期发送一个分片,成功后确认推进;失败下轮重发同一分片
             if (audio::buffer::getBLEPacket(*blePacket))
@@ -1229,21 +1276,6 @@ static void rf_handle(void *arg)
                 audio::buffer::confirmBLEPacketSent();
               }
             }
-          }
-          if (statusNumber++ >= RF_CLIENT_STATUS_PERIOD)
-          {
-            // 发送状态包
-            Packet *packet = (Packet *)malloc(PACKET_CLIENT_STATUS_SIZE);
-            packet->type = PACKET_TYPE_CLIENT_STATUS;
-            packet->packet.clientStatus.status = PACKET_CLIENT_STATUS_OK;
-            packet->packet.clientStatus.battery = (uint8_t)power::getBATPercent();
-            // 编码器未启动(仅配对未推流)时上报命令增益,即接收端配置的初始增益
-            packet->packet.clientStatus.gain = audio::encoder::isOn()
-                                                   ? audio::encoder::getGain()
-                                                   : config::status.audio.gain;
-            ble_send((uint8_t *)packet, PACKET_CLIENT_STATUS_SIZE);
-            free(packet);
-            statusNumber = 0;
           }
         }
 
@@ -1312,7 +1344,8 @@ static void rf_handle(void *arg)
             wifiSendBuffer = NULL;
           }
         }
-        if (statusNumber++ >= RF_CLIENT_STATUS_PERIOD)
+        const uint32_t wifiNow = millis();
+        if (wifiNow - wifiStatusTime >= RF_CLIENT_STATUS_PERIOD)
         {
           // 发送状态包
           netbuf *buf = netbuf_new();
@@ -1328,7 +1361,7 @@ static void rf_handle(void *arg)
                                                    : config::status.audio.gain;
             wifi_send(buf);
           }
-          statusNumber = 0;
+          wifiStatusTime = wifiNow;
         }
 
         /* 接收 */
