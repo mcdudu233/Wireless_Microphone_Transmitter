@@ -1,8 +1,12 @@
 # 无线领夹式麦克风-发射器 (Wireless Microphone Transmitter)
 
-本文件夹是开源无线领夹式麦克风的发射器的代码，完整开源项目见[根目录](https://github.com/mcdudu233/Wireless_Microphone.git)。
+**本文件夹是开源无线领夹式麦克风的发射器的代码，喜欢可以给个 Star 哦~**
+
+**完整开源项目见[根目录](https://github.com/mcdudu233/Wireless_Microphone.git)，硬件开源见[立创平台](https://oshwhub.com/dudu233/wireless-microphone)。**
 
 发射器主要用于采集和传输音频，因此代码主要实现了用 I2S 采集 PCM1822 的音频数据，并用 ESP32-S3 自带的 WIFI 或 BLE 传输无损的音频数据。音频数据采用了缓冲区进行储存，并用代码完成录制频率、比特数和通道数等等参数的调整。受制于硬件限制，发射器最高传输 192kHZ(32bit) 的无损麦克风音频数据。
+
+---
 
 ## 操作说明
 
@@ -16,15 +20,17 @@
 
 ### 指示灯说明
 
-| 指示灯颜色 | 说明  |
-| --- | --- |
-| 绿灯渐亮 | 准备开机，继续长按按钮直至绿色闪灯，完成开机 |
-| 红灯渐亮 | 准备关机，继续长按按钮直至红色闪灯，完成关机 |
-| 红灯长亮 | 电池电量低于20%，建议及时充电 |
-| 红灯渐变闪烁 | 电池电量低于5%，请充电 |
-| 蓝灯长亮 | 等待接收器连接 |
-| 黄灯红灯交替闪烁 | 程序遇到致命错误，等待5秒后自动重启系统 |
-| 无灯  | 已经关机或者接收器已经连接 |
+| 指示灯颜色    | 说明                     |
+| -------- | ---------------------- |
+| 绿灯渐亮     | 准备开机，继续长按按钮直至绿色闪灯，完成开机 |
+| 红灯渐亮     | 准备关机，继续长按按钮直至红色闪灯，完成关机 |
+| 红灯长亮     | 电池电量低于20%，建议及时充电       |
+| 红灯渐变闪烁   | 电池电量低于5%，请充电           |
+| 蓝灯长亮     | 等待接收器连接                |
+| 黄灯红灯交替闪烁 | 程序遇到致命错误，等待5秒后自动重启系统   |
+| 无灯       | 已经关机或者接收器已经连接          |
+
+---
 
 ## 目录结构
 
@@ -44,6 +50,8 @@
 - [LICENSE](https://github.com/mcdudu233/Wireless_Microphone/blob/main/Transmitter/LICENSE) --> 使用协议
 - [README.md](https://github.com/mcdudu233/Wireless_Microphone/blob/main/Transmitter/README.md) --> 介绍
 
+---
+
 ## 下载&编译
 
 项目基于 PlatformIO 开发，使用 Arduino 和 ESP-IDF 双框架。
@@ -57,21 +65,28 @@
 ### 手动编译
 
 1. 用 Visual Studio Code 打开 **发射器(Transmitter)** 或者 **接收器(Receiver)** 的项目
-
+   
    本项目需要使用 **Visual Studio Code** 打开，如没有请先下载安装。
-
+   
    安装好 Visual Studio Code 后，请在左边界面安装 **PlatformIO** 插件。
-
+   
    根据提示重新打开这个项目， PlatformIO 会自动下载依赖等等数据，这时候请不要编译或者上传固件。
 
 2. 修改代码 *(如有需要)*
-
+   
    根据 **README.md** 提供的 **目录结构** ，可以快速理解代码的原理，根据自己需要修改代码。
 
 3. 点击界面左下角或者左边的 Build 进行编译即可
-
+   
    找到 PlatformIO 自带的 **Build** 按钮编译即可，这时候会自动下载依赖编译程序，如有问题欢迎提交 **Issues** 。
 
+---
+
+## 使用协议
+
+使用前请查看 [LICENSE](https://github.com/mcdudu233/Wireless_Microphone_Transmitter/blob/master/LICENSE)。
+
+---
 
 ## 相关链接
 
