@@ -1,3 +1,4 @@
+#include "config.h"
 #include "module/usb/usb_descriptors.h"
 
 #include "tusb.h"
@@ -19,7 +20,7 @@ tusb_desc_device_t const desc_device = {
 
     .idVendor = 0x303A,  // ID
     .idProduct = 0x8000, // ID
-    .bcdDevice = 0x0100,
+    .bcdDevice = CONFIG_VERSION_BCD,
 
     .iManufacturer = 0x01,
     .iProduct = 0x02,

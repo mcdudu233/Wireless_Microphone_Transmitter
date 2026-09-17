@@ -49,7 +49,20 @@ void config::setup()
   }
   else
   {
-    if (prefs.getUShort(CONFIG_VERSION_NAME) != CONFIG_VERSION_VALUE)
+    const uint16_t stored_version = prefs.getUShort(CONFIG_VERSION_NAME);
+    if (stored_version == 0x000A)
+    {
+      // v1.0 与 v0.10 配置布局完全一致，升级时保留用户已有设置，仅更新版本号
+      ConfigValue old_config{};
+      if (prefs.getBytesLength(CONFIG_DATA_NAME) == sizeof(old_config) &&
+          prefs.getBytes(CONFIG_DATA_NAME, &old_config, sizeof(old_config)) == sizeof(old_config))
+      {
+        config = old_config;
+      }
+      prefs.putUShort(CONFIG_VERSION_NAME, CONFIG_VERSION_VALUE);
+      prefs.putBytes(CONFIG_DATA_NAME, &config, sizeof(ConfigValue));
+    }
+    else if (stored_version != CONFIG_VERSION_VALUE)
     {
       // 版本不一致重置配置
       prefs.clear();
